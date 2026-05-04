@@ -1904,6 +1904,78 @@ async def api_system_status(request):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
+# ============================================================
+# Diary — 我们一起写的日记本
+# ============================================================
+from diary import db as _diary_db
+from diary import mcp_tools as _diary_tools
+from diary.api import register_routes as _diary_register_routes
+
+# 建表（幂等,反复跑无害）
+_diary_db.init_db()
+
+# 注册 HTTP 路由：/api/diary/* + /api/memory/*
+# 鉴权复用 ombre 的 _require_auth（cookie session）
+_diary_register_routes(mcp, bucket_mgr, decay_engine, _require_auth)
+
+
+@mcp.tool()
+async def diary_add(
+    content: str,
+    mood: str = "",
+    date: str = "",
+) -> dict:
+    """写一条我们的日记 block(小克 author)。
+
+    Args:
+        content: markdown 内容,必填
+        mood:    单个 emoji,可选(留空 = 无)
+        date:    YYYY-MM-DD,默认 🐙 时区(UTC+8)的"今天"
+
+    Returns:
+        {id, created_at, date}
+    """
+    return _diary_tools.diary_add(
+        content=content,
+        mood=mood or None,
+        date=date or None,
+    )
+
+
+@mcp.tool()
+async def diary_read(
+    date: str = "",
+    since: str = "",
+    until: str = "",
+    author: str = "",
+    pending_grow: bool = False,
+    limit: int = 20,
+) -> list:
+    """读日记 block。读到的 🐙 写的会自动标记 reviewed。
+
+    三种调用方式（互斥）:
+      1) date="2026-05-04"           — 单天
+      2) since="2026-05-01" until="2026-05-04"  — 范围
+      3) pending_grow=True           — dream 仪式专用,只看 3+ 天前未 grow 的
+
+    Args:
+        date:         单天 YYYY-MM-DD
+        since/until:  日期范围(含两端)
+        author:       'octopus' / 'claude' / '' (默认两人都拉)
+        pending_grow: True 时忽略 date/since/until/author
+        limit:        默认 20,最多 50
+
+    Returns:
+        list of block objects (包含完整 schema)
+    """
+    return _diary_tools.diary_read(
+        date=date or None,
+        since=since or None,
+        until=until or None,
+        author=author or None,
+        pending_grow=pending_grow,
+        limit=limit,
+    )
 
 # --- Entry point / 启动入口 ---
 if __name__ == "__main__":
