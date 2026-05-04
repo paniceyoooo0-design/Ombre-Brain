@@ -204,6 +204,75 @@
   .star.starred { color: var(--accent-star); }
   .star:hover { transform: scale(1.18); }
 
+  /* 编辑按钮——只在自己的 block 上,且只在 hover 时露出 */
+  .edit-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: var(--sans);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-fade);
+    padding: 4px 8px;
+    opacity: 0;
+    transition: opacity 0.18s, color 0.18s;
+    line-height: 1;
+  }
+  .block:hover .edit-btn { opacity: 1; }
+  .edit-btn:hover { color: var(--text); }
+
+  /* 编辑模式下:content 变 textarea */
+  .content-editor {
+    width: 100%;
+    font-family: var(--serif);
+    font-size: 21px;
+    line-height: 1.62;
+    color: var(--text);
+    background: var(--bg-deep);
+    border: none;
+    outline: none;
+    padding: 14px 16px;
+    border-radius: 3px;
+    resize: vertical;
+    min-height: 80px;
+    box-shadow: inset 0 1px 2px rgba(42, 37, 32, 0.06);
+    box-sizing: border-box;
+  }
+
+  .edit-foot {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 10px;
+    justify-content: flex-end;
+  }
+
+  .edit-action {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: var(--sans);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    padding: 6px 14px;
+    border-radius: 3px;
+    transition: opacity 0.18s;
+  }
+  .edit-action.cancel {
+    color: var(--text-fade);
+  }
+  .edit-action.cancel:hover { color: var(--text); }
+  .edit-action.save {
+    background: var(--text);
+    color: var(--bg);
+  }
+  .edit-action.save:hover { opacity: 0.85; }
+  .edit-action.save:disabled { opacity: 0.4; cursor: not-allowed; }
+
   /* ---------- Composer ---------- */
   .composer {
     border-top: 2px solid var(--rule);
@@ -357,17 +426,22 @@
 // ---------- Date helpers (Asia/Shanghai timezone) ----------
 
 function todayStr() {
-  // 🐙 时区(UTC+8)的"今天"
-  const d = new Date();
-  const utc = d.getTime() + d.getTimezoneOffset() * 60000;
-  const beijing = new Date(utc + 8 * 3600000);
-  return beijing.toISOString().slice(0, 10);
+  // 直接问 Intl 拿 Asia/Shanghai 的"今天",不手动算时区
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());  // en-CA 输出 'YYYY-MM-DD' 格式
 }
 
 function shiftDate(s, days) {
-  const d = new Date(s + 'T00:00:00+08:00');
+  // 把 s 当成北京时间正午(避开 DST/边界),加减天数,再格式化回北京日期
+  // 用正午是因为它离一天的两端都最远——任何小的时区/夏令时偏移都不会越过日界
+  const d = new Date(s + 'T12:00:00+08:00');
   d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(d);
 }
 
 function formatDateDisplay(s) {
@@ -428,6 +502,13 @@ function renderBlock(b) {
   const grown = b.grown_at
     ? '<span class="grown">🌱 GROWN</span>'
     : '';
+  // 自己写的、还没 grown 的才能编辑
+  // 小克写的不让 🐙 改(spec: "你的 memory 我不太想修改")
+  // grown 之后不让改(因为内容已经流到 ombre,改这边就跟 ombre 桶不一致了)
+  const canEdit = b.author === 'octopus' && !b.grown_at;
+  const editBtn = canEdit
+    ? `<button class="edit-btn" data-id="${b.id}">编辑</button>`
+    : '';
 
   return `
     <article class="block" data-id="${b.id}">
@@ -435,11 +516,12 @@ function renderBlock(b) {
         <span class="author ${authorClass}">${authorName}</span>
         <span class="timestamp">${timeOf(b.created_at)}</span>
       </div>
-      <div class="content">${escapeHtml(b.content)}</div>
+      <div class="content" data-id="${b.id}">${escapeHtml(b.content)}</div>
       <div class="block-foot">
         <span class="mood">${mood}</span>
         <span class="foot-right">
           ${grown}
+          ${editBtn}
           <button class="star ${starred}" data-id="${b.id}" aria-label="star">${starGlyph}</button>
         </span>
       </div>
@@ -470,6 +552,94 @@ function bindStarToggles() {
   });
 }
 
+function bindEditButtons() {
+  document.querySelectorAll('.edit-btn').forEach((btn) => {
+    btn.addEventListener('click', () => enterEditMode(btn.dataset.id));
+  });
+}
+
+function enterEditMode(blockId) {
+  const article = document.querySelector(`article.block[data-id="${blockId}"]`);
+  if (!article) return;
+
+  const contentEl = article.querySelector('.content');
+  const footEl = article.querySelector('.block-foot');
+  const original = contentEl.textContent;
+
+  // content → textarea
+  const textarea = document.createElement('textarea');
+  textarea.className = 'content-editor';
+  textarea.value = original;
+  contentEl.replaceWith(textarea);
+
+  // 自动撑开高度
+  const autosize = () => {
+    textarea.style.height = 'auto';
+    textarea.style.height = textarea.scrollHeight + 'px';
+  };
+  textarea.addEventListener('input', autosize);
+  setTimeout(autosize, 0);  // 初始一下
+  textarea.focus();
+  // 光标移到末尾
+  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+
+  // 隐藏原 foot,加个临时编辑 foot
+  footEl.style.display = 'none';
+  const editFoot = document.createElement('div');
+  editFoot.className = 'edit-foot';
+  editFoot.innerHTML = `
+    <button class="edit-action cancel">取消</button>
+    <button class="edit-action save">保存</button>
+  `;
+  textarea.after(editFoot);
+
+  const exit = (newContent) => {
+    const restored = document.createElement('div');
+    restored.className = 'content';
+    restored.dataset.id = blockId;
+    restored.textContent = newContent;
+    textarea.replaceWith(restored);
+    editFoot.remove();
+    footEl.style.display = '';
+  };
+
+  editFoot.querySelector('.cancel').addEventListener('click', () => {
+    exit(original);
+  });
+
+  editFoot.querySelector('.save').addEventListener('click', async (e) => {
+    const newContent = textarea.value.trim();
+    if (!newContent) return;  // 不允许清空(后端也会拦)
+    if (newContent === original) {
+      exit(original);
+      return;
+    }
+    const saveBtn = e.currentTarget;
+    saveBtn.disabled = true;
+    try {
+      await api(`/api/diary/blocks/${blockId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ content: newContent }),
+      });
+      exit(newContent);
+    } catch (err) {
+      saveBtn.disabled = false;
+      alert('保存失败:' + err.message);
+    }
+  });
+
+  // ⌘+Enter 保存,Esc 取消
+  textarea.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      editFoot.querySelector('.save').click();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      editFoot.querySelector('.cancel').click();
+    }
+  });
+}
+
 // ---------- Loaders ----------
 
 async function loadDay(date) {
@@ -487,6 +657,7 @@ async function loadDay(date) {
     }
     stream.innerHTML = blocks.map(renderBlock).join('');
     bindStarToggles();
+    bindEditButtons();
   } catch (e) {
     stream.innerHTML = `<div class="empty">读取失败:${escapeHtml(e.message)}</div>`;
   }
