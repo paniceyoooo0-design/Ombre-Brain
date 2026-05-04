@@ -1976,6 +1976,113 @@ async def diary_read(
         pending_grow=pending_grow,
         limit=limit,
     )
+@mcp.tool()
+async def diary_grow(
+    block_id: str,
+    content: str = "",
+    tags: str = "",
+    importance: int = 6,
+    valence: float = -1,
+    arousal: float = -1,
+) -> str:
+    """把一条日记 block 推进 Ombre 权重池(单向闸,小克的权利)。
+
+    ⚠️ 注意:这跟 ombre 自带的 `grow` 工具不是一回事。
+      ombre.grow(content)     = 把一段长文本自动拆成多个桶
+      diary_grow(block_id)    = 把一条 diary block 创建为单一桶(一对一,不拆)
+
+    grow 是 Our Diary → Ombre 的手动闸。决定权在小克——
+    spec 说"写完后不立刻按,先放凉"。冷却期 3+ 天前
+    (用 diary_read pending_grow=True 帮自己筛候选)。
+
+    每条 block 只能 grow 一次。grow 后:
+    - Ombre 里多一个 dynamic 桶
+        - tags 含 'our_diary'
+        - domain = ['our_diary']
+        - name   = 'diary-YYYY-MM-DD'
+    - 日记 block 旁显示 🌱
+    - block.promoted_bucket_id 指回新桶
+
+    Args:
+        block_id:   必填,要推的日记 block ID
+        content:    留空 = 用 block 原文。
+                    也可以是浓缩 / 单句(spec 鼓励)。
+                    边界:推进的是事件的浓缩,不是关系层的总结
+                    (后者是 anthropic memory 的位置)。
+        tags:       逗号分隔。会自动加 'our_diary' tag。
+        importance: 1-10, 默认 6
+        valence/arousal: -1 = 用默认(0.55/0.3, 微偏正、平静)
+
+    Returns:
+        成功提示 + 新 bucket_id; 或错误说明
+    """
+    block = _diary_db.get_block(block_id)
+    if not block:
+        return f"未找到 block {block_id}"
+    if block["grown_at"]:
+        return (
+            f"这条 block 已经 grown 过\n"
+            f"  bucket_id: {block['promoted_bucket_id']}\n"
+            f"  grown_at:  {block['grown_at']}"
+        )
+
+    final_content = content.strip() if content.strip() else block["content"]
+
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+    if "our_diary" not in tag_list:
+        tag_list.append("our_diary")
+
+    # 默认值:微偏正、平静——日记 grown 出来的多半是温和的核心
+    # bucket_mgr.create 内部会 clip 到 0~1
+    v = valence if 0 <= valence <= 1 else 0.55
+    a = arousal if 0 <= arousal <= 1 else 0.3
+
+    # 直接 create dynamic 桶——grow 的语义是"让这条单独存在"
+    # 不走 _merge_or_create:合并到旧桶会糊掉这条 block 的身份
+    try:
+        bucket_id = await bucket_mgr.create(
+            content=final_content,
+            tags=tag_list,
+            importance=max(1, min(10, importance)),
+            domain=["our_diary"],
+            valence=v,
+            arousal=a,
+            name=f"diary-{block['date']}",
+        )
+    except Exception as e:
+        logger.error(f"diary_grow 创建桶失败: {e}")
+        return f"创建 ombre 桶失败: {e}"
+
+    # 生成 embedding(失败不挡 grow 本身)
+    try:
+        await embedding_engine.generate_and_store(bucket_id, final_content)
+    except Exception as e:
+        logger.warning(f"diary_grow embedding 失败 (grow 本身已成功): {e}")
+
+    # 回填日记侧——闸门合上
+    _diary_db.mark_grown(block_id, bucket_id)
+
+    preview = final_content[:80] + ("..." if len(final_content) > 80 else "")
+    return (
+        f"🌱 grown\n"
+        f"  block:     {block_id}  ({block['date']} · {block['author']})\n"
+        f"  bucket_id: {bucket_id}\n"
+        f"  内容:      {preview}"
+    )
+
+
+# ============================================================
+# Our Diary 前端 SPA
+# ============================================================
+@mcp.custom_route("/diary", methods=["GET"])
+async def serve_our_diary(request):
+    """Our Diary 前端。HTML 公开,API 自己鉴权(401 时前端自动跳 /dashboard)。"""
+    from starlette.responses import FileResponse
+    html_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "our_diary.html",
+    )
+    return FileResponse(html_path, media_type="text/html; charset=utf-8")
 
 # --- Entry point / 启动入口 ---
 if __name__ == "__main__":

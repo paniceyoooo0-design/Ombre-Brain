@@ -19,6 +19,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY *.py .
 COPY diary/ ./diary/
 COPY dashboard.html .
+COPY our_diary.html .
 COPY config.example.yaml ./config.yaml
 
 # Persistent mount point: bucket data
