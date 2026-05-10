@@ -36,7 +36,7 @@ merge_threshold: 75
 dehydration:
   # Supports any OpenAI-compatible API: DeepSeek / Ollama / LM Studio / vLLM / Gemini etc.
   # 支持所有 OpenAI 兼容 API：DeepSeek / Ollama / LM Studio / vLLM / Gemini 等
-  model: "deepseek-chat"
+  model: "deepseek-v4-pro"
   base_url: "https://api.deepseek.com/v1"
   # Common base_url examples / 常见 base_url 示例：
   #   DeepSeek:    https://api.deepseek.com/v1
@@ -69,8 +69,7 @@ decay:
 embedding:
   enabled: true                   # Enable embedding / 启用向量化
   model: "gemini-embedding-001"   # Embedding model / 向量化模型
-  # base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
-  # api_key: ""                  
+  base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
 
 # --- Scoring weights / 检索权重参数 ---
 # total = topic(×4) + emotion(×2) + time(×1.5) + importance(×1)
