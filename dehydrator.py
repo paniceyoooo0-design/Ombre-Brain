@@ -73,17 +73,20 @@ DIGEST_PROMPT = """你是一个日记整理专家。用户会发送一段包含�
 8. 在 content 中对人名、地名、专有名词用 [[双链]] 标记（如 [[婷易]]、[[Obsidian]]），普通词汇不要加
 
 输出格式（纯 JSON 数组，无其他内容）：
-[
-  {
-    "name": "条目标题（10字以内）",
-    "content": "整理后的内容",
-    "domain": ["主题域1"],
-    "valence": 0.7,
-    "arousal": 0.4,
-    "tags": ["核心词1", "核心词2", "扩展词1", "扩展词2"],
-    "importance": 5
-  }
-]
+输出格式（纯 JSON 对象，无其他内容）：
+{
+  "items": [
+    {
+      "name": "条目标题（10字以内）",
+      "content": "整理后的内容",
+      "domain": ["主题域1"],
+      "valence": 0.7,
+      "arousal": 0.4,
+      "tags": ["核心词1", "核心词2", "扩展词1", "扩展词2"],
+      "importance": 5
+    }
+  ]
+}
 
 tags 生成规则：先从原文精准提取 3~5 个核心词，再引申扩展 5~8 个语义相关词（近义词、上位词、关联场景词），合并为一个数组。
 
@@ -544,6 +547,7 @@ class Dehydrator:
             ],
             max_tokens=8192,
             temperature=0.0,
+            response_format={"type": "json_object"},
         )
         if not response.choices:
             return []
@@ -565,7 +569,8 @@ class Dehydrator:
             cleaned = raw.strip()
             if cleaned.startswith("```"):
                 cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0]
-            items = json.loads(cleaned)
+            parsed = json.loads(cleaned)
+            items = parsed.get("items", []) if isinstance(parsed, dict) else parsed
         except (json.JSONDecodeError, IndexError, ValueError):
             logger.warning(
                 f"Diary digest JSON parse failed / JSON 解析失败 "
