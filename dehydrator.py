@@ -542,7 +542,7 @@ class Dehydrator:
                 {"role": "system", "content": DIGEST_PROMPT},
                 {"role": "user", "content": content[:5000]},
             ],
-            max_tokens=2048,
+            max_tokens=8192,
             temperature=0.0,
         )
         if not response.choices:
@@ -567,8 +567,11 @@ class Dehydrator:
                 cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0]
             items = json.loads(cleaned)
         except (json.JSONDecodeError, IndexError, ValueError):
-            logger.warning(f"Diary digest JSON parse failed / JSON 解析失败: {raw[:200]}")
-            return []
+    logger.warning(
+        f"Diary digest JSON parse failed / JSON 解析失败 "
+        f"(raw length: {len(raw)}, preview: {raw[:200]!r})"
+    )
+    return []
 
         if not isinstance(items, list):
             return []
