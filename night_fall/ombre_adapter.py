@@ -151,10 +151,21 @@ class OmbreAdapter:
             client_kwargs["base_url"] = base_url
         client = AsyncAnthropic(**client_kwargs)
 
+        # Strict JSON discipline for Claude: prefill "{" so it can't emit any
+        # preamble, and remind it in the system prompt to escape " and newlines.
+        json_hint = (
+            "\n\nIMPORTANT: Respond with valid JSON only. Inside any string value, "
+            'escape every double quote as \\" and every newline as \\n. '
+            "Do not wrap the JSON in markdown code fences."
+        )
+
         response = await client.messages.create(
             model=model,
-            system=system_prompt,
-            messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+            system=system_prompt + json_hint,
+            messages=[
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                {"role": "assistant", "content": "{"},  # prefill forces JSON start
+            ],
             max_tokens=max_tokens,
             temperature=temperature,
         )
@@ -164,4 +175,5 @@ class OmbreAdapter:
         raw = "".join(parts).strip()
         if not raw:
             raise JsonModelError("Anthropic provider returned an empty response.")
-        return raw
+        # Prepend the prefilled "{" since Anthropic returns only the continuation.
+        return "{" + raw
