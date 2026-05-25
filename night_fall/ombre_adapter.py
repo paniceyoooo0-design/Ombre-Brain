@@ -172,8 +172,12 @@ class OmbreAdapter:
         if not response.content:
             raise JsonModelError("Anthropic provider returned no content.")
         parts = [block.text for block in response.content if getattr(block, "type", "") == "text"]
-        raw = "".join(parts).strip()
+        raw = "".join(parts).lstrip()
         if not raw:
             raise JsonModelError("Anthropic provider returned an empty response.")
-        # Prepend the prefilled "{" since Anthropic returns only the continuation.
-        return "{" + raw
+        # Adaptive prefill handling: some proxies (e.g. right.codes) echo our
+        # prefilled "{" back into the response, others (Anthropic native) strip
+        # it. Prepend only when missing, so both paths converge on valid JSON.
+        if not raw.startswith("{"):
+            raw = "{" + raw
+        return raw
