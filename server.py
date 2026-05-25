@@ -114,6 +114,122 @@ mcp = FastMCP(
 
 
 # =============================================================
+# Night-Fall: latent dream extension
+# 梦境扩展：grow 末尾异步生成、breath 时精妙浮现 + "做了一个梦" 提示
+# =============================================================
+from types import SimpleNamespace
+from datetime import datetime, timezone
+
+NIGHT_FALL_ENABLED = False
+night_fall_cfg = None
+ombre_server = None
+
+try:
+    # Tell Night-Fall where Ombre lives before importing its config loader
+    os.environ.setdefault("OMBRE_HOME", os.path.dirname(os.path.abspath(__file__)))
+    _buckets_dir = config.get("buckets_dir", "")
+    if _buckets_dir:
+        os.environ.setdefault("OMBRE_BUCKETS_DIR", _buckets_dir)
+
+    from night_fall.config import load_config as _load_nf_config
+    from night_fall.extension import register_night_fall
+    from night_fall.tool import night_fall_tool
+    from night_fall.storage import DreamStorage
+    from night_fall.metadata import parse_dt as _nf_parse_dt
+
+    ombre_server = SimpleNamespace(
+        mcp=mcp,
+        config=config,
+        bucket_mgr=bucket_mgr,
+        dehydrator=dehydrator,
+        embedding_engine=embedding_engine,
+    )
+    night_fall_cfg = _load_nf_config()
+    register_night_fall(ombre_server, night_fall_cfg)
+    NIGHT_FALL_ENABLED = True
+    logger.info(f"[Night Fall] enabled. dreams_dir={night_fall_cfg.dreams_dir}")
+except Exception as _nf_err:
+    logger.warning(f"[Night Fall] not enabled: {_nf_err}")
+
+
+def _maybe_dream():
+    """Fire-and-forget dream generation after grow. No-op when Night-Fall disabled."""
+    if not NIGHT_FALL_ENABLED:
+        return
+    async def _safe():
+        try:
+            result = await night_fall_tool(ombre_server, night_fall_cfg, action="generate")
+            logger.info(f"[Night Fall] generate: {result}")
+        except Exception as e:
+            logger.warning(f"[Night Fall] generate failed: {e}")
+    try:
+        asyncio.create_task(_safe())
+    except Exception as e:
+        logger.warning(f"[Night Fall] task spawn failed: {e}")
+
+
+def _nf_last_breath_path():
+    return night_fall_cfg.logs_dir / "last_breath.json"
+
+
+def _nf_read_last_breath_at():
+    try:
+        data = _json_lib.loads(_nf_last_breath_path().read_text(encoding="utf-8"))
+        return _nf_parse_dt(data["at"])
+    except Exception:
+        return None
+
+
+def _nf_write_last_breath_now():
+    try:
+        _nf_last_breath_path().write_text(
+            _json_lib.dumps({"at": datetime.now(timezone.utc).isoformat(timespec="seconds")}),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        logger.warning(f"[Night Fall] last_breath write failed: {e}")
+
+
+def _nf_has_new_pending_dream(last_at):
+    """Any unsurfaced dream generated after last_at?"""
+    try:
+        store = DreamStorage(night_fall_cfg.dreams_dir, night_fall_cfg.logs_dir)
+        for r in store.list():
+            if r.surfaced:
+                continue
+            if last_at is None or r.generated_at > last_at:
+                return True
+        return False
+    except Exception:
+        return False
+
+
+async def _night_fall_breath_addendum(query: str, valence: float, arousal: float) -> str:
+    """Return text to append to breath's response: surfaced dream + new-dream hint."""
+    if not NIGHT_FALL_ENABLED:
+        return ""
+    parts: list[str] = []
+    last_at = _nf_read_last_breath_at()
+    try:
+        surface_result = await night_fall_tool(
+            ombre_server, night_fall_cfg,
+            action="surface",
+            query=query or "",
+            current_valence=valence,
+            current_arousal=arousal,
+            is_session_start=False,
+        )
+        if surface_result and surface_result.startswith("=== 浮上来的梦"):
+            parts.append(surface_result)
+    except Exception as e:
+        logger.warning(f"[Night Fall] surface failed: {e}")
+    if _nf_has_new_pending_dream(last_at):
+        parts.append("（做了一个梦）")
+    _nf_write_last_breath_now()
+    return ("\n---\n" + "\n---\n".join(parts)) if parts else ""
+
+
+# =============================================================
 # Dashboard Auth — simple cookie-based session auth
 # Dashboard 认证 —— 基于 Cookie 的会话认证
 #
@@ -765,11 +881,13 @@ async def breath(
 
     if not results:
         await _fire_webhook("breath", {"mode": "empty", "matches": 0})
-        return "未找到相关记忆。"
+        base_text = "未找到相关记忆。"
+    else:
+        base_text = "\n---\n".join(results)
+        await _fire_webhook("breath", {"mode": "ok", "matches": len(matches), "chars": len(base_text)})
 
-    final_text = "\n---\n".join(results)
-    await _fire_webhook("breath", {"mode": "ok", "matches": len(matches), "chars": len(final_text)})
-    return final_text
+    nf_addendum = await _night_fall_breath_addendum(query, valence, arousal)
+    return base_text + nf_addendum
 
 
 # =============================================================
@@ -923,6 +1041,7 @@ async def grow(content: str) -> str:
             name=analysis.get("suggested_name", ""),
         )
         action = "合并" if is_merged else "新建"
+        _maybe_dream()
         return f"{action} → {result_name} | {','.join(analysis.get('domain', []))} V{analysis.get('valence', 0.5):.1f}/A{analysis.get('arousal', 0.3):.1f}"
 
     # --- Step 1: let API split and organize / 让 API 拆分整理 ---
@@ -966,6 +1085,7 @@ async def grow(content: str) -> str:
             )
             results.append(f"⚠️{item.get('name', '?')}")
 
+    _maybe_dream()
     return f"{len(items)}条|新{created}合{merged}\n" + "\n".join(results)
 
 

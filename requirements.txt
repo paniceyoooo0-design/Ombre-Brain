@@ -27,3 +27,7 @@ httpx>=0.27.0
 # 向量相似度计算 (导入模式/聚类)
 numpy>=1.24.0
 scikit-learn>=1.2.0
+
+# Night-Fall: 梦境扩展（vendor 在 ./night_fall/，无需 pip 安装）
+# Anthropic SDK 用于让 Claude 自己写梦
+anthropic>=0.40.0
