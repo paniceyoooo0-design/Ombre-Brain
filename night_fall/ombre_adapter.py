@@ -151,33 +151,47 @@ class OmbreAdapter:
             client_kwargs["base_url"] = base_url
         client = AsyncAnthropic(**client_kwargs)
 
-        # Strict JSON discipline for Claude: prefill "{" so it can't emit any
-        # preamble, and remind it in the system prompt to escape " and newlines.
-        json_hint = (
-            "\n\nIMPORTANT: Respond with valid JSON only. Inside any string value, "
-            'escape every double quote as \\" and every newline as \\n. '
-            "Do not wrap the JSON in markdown code fences."
+        # Use Tool Use to guarantee well-formed JSON: the SDK enforces schema
+        # serialization, so the LLM cannot emit unescaped quotes or stray
+        # newlines that break json.loads.
+        tool_name = "submit_response"
+        tool_instruction = (
+            f"\n\nReturn your response by calling the `{tool_name}` tool. Pass "
+            "the JSON structure described above as the tool's arguments — do "
+            "not write the JSON as plain text."
         )
 
         response = await client.messages.create(
             model=model,
-            system=system_prompt + json_hint,
-            messages=[
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-                {"role": "assistant", "content": "{"},  # prefill forces JSON start
-            ],
+            system=system_prompt + tool_instruction,
+            messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+            tools=[{
+                "name": tool_name,
+                "description": "Submit the structured JSON response described in the system prompt.",
+                "input_schema": {
+                    "type": "object",
+                    "additionalProperties": True,
+                },
+            }],
+            tool_choice={"type": "tool", "name": tool_name},
             max_tokens=max_tokens,
             temperature=temperature,
         )
         if not response.content:
             raise JsonModelError("Anthropic provider returned no content.")
-        parts = [block.text for block in response.content if getattr(block, "type", "") == "text"]
-        raw = "".join(parts).lstrip()
+
+        # Preferred: tool_use block with structured input
+        for block in response.content:
+            if getattr(block, "type", "") == "tool_use" and getattr(block, "name", "") == tool_name:
+                return json.dumps(block.input, ensure_ascii=False)
+
+        # Fallback: some proxies may not relay tool_use blocks correctly; try
+        # to recover plain text and let the upstream JSON parser have a go.
+        parts = [getattr(b, "text", "") for b in response.content if getattr(b, "type", "") == "text"]
+        raw = "".join(parts).strip()
         if not raw:
-            raise JsonModelError("Anthropic provider returned an empty response.")
-        # Adaptive prefill handling: some proxies (e.g. right.codes) echo our
-        # prefilled "{" back into the response, others (Anthropic native) strip
-        # it. Prepend only when missing, so both paths converge on valid JSON.
-        if not raw.startswith("{"):
-            raw = "{" + raw
+            raise JsonModelError(
+                "Anthropic provider returned neither a tool_use block nor text. "
+                "The proxy may not support tool use."
+            )
         return raw
