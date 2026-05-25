@@ -204,7 +204,9 @@ def _nf_has_new_pending_dream(last_at):
         return False
 
 
-async def _night_fall_breath_addendum(query: str, valence: float, arousal: float) -> str:
+async def _night_fall_breath_addendum(
+    query: str, valence: float, arousal: float, is_session_start: bool = False
+) -> str:
     """Return text to append to breath's response: surfaced dream + new-dream hint."""
     if not NIGHT_FALL_ENABLED:
         return ""
@@ -217,7 +219,7 @@ async def _night_fall_breath_addendum(query: str, valence: float, arousal: float
             query=query or "",
             current_valence=valence,
             current_arousal=arousal,
-            is_session_start=False,
+            is_session_start=is_session_start,
         )
         if surface_result and surface_result.startswith("=== 浮上来的梦"):
             parts.append(surface_result)
@@ -619,8 +621,9 @@ async def breath(
     arousal: float = -1,
     max_results: int = 20,
     importance_min: int = -1,
+    is_session_start: bool = False,
 ) -> str:
-    """检索/浮现记忆。不传query或传空=自动浮现,有query=关键词检索。max_tokens控制返回总token上限(默认10000)。domain逗号分隔,valence/arousal 0~1(-1忽略)。max_results控制返回数量上限(默认20,最大50)。importance_min>=1时按重要度批量拉取(不走语义搜索,按importance降序返回最多20条)。"""
+    """检索/浮现记忆。不传query或传空=自动浮现,有query=关键词检索。max_tokens控制返回总token上限(默认10000)。domain逗号分隔,valence/arousal 0~1(-1忽略)。max_results控制返回数量上限(默认20,最大50)。importance_min>=1时按重要度批量拉取(不走语义搜索,按importance降序返回最多20条)。is_session_start=True表示新会话开始(让潜伏梦有机会浮现)。"""
     await decay_engine.ensure_started()
     max_results = min(max_results, 50)
     max_tokens = min(max_tokens, 20000)
@@ -886,7 +889,7 @@ async def breath(
         base_text = "\n---\n".join(results)
         await _fire_webhook("breath", {"mode": "ok", "matches": len(matches), "chars": len(base_text)})
 
-    nf_addendum = await _night_fall_breath_addendum(query, valence, arousal)
+    nf_addendum = await _night_fall_breath_addendum(query, valence, arousal, is_session_start)
     return base_text + nf_addendum
 
 
