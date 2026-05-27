@@ -79,7 +79,9 @@ async def extract_imagery(adapter, buckets: list[dict]) -> list[dict]:
             for b in buckets
         ]
     }
-    raw = await adapter.call_json_model(_prompt(), payload, max_tokens=700, temperature=0.3)
+    # temperature=0.0 — imagery extraction is verbatim copying, no creativity needed.
+    # Higher temps led to paraphrasing that the verbatim validator silently dropped.
+    raw = await adapter.call_json_model(_prompt(), payload, max_tokens=700, temperature=0.0)
     fragments = _validate_fragments(raw, buckets)
     if len(fragments) < 2:
         raise ImageryExtractionError("Imagery extraction produced fewer than 2 verified fragments.")

@@ -168,17 +168,32 @@ async def night_fall_tool(
 
     buckets = await select_buckets(adapter, cfg.selection_limit, current_valence, current_arousal)
     if len(buckets) < 2:
+        store.log_event("generate_failed", {
+            "reason": "not_enough_buckets",
+            "detail": f"only {len(buckets)} candidate bucket(s), need >= 2",
+            "at": now_iso(),
+        })
         return "Night Fall skipped: not enough memory material to form a dream."
 
     try:
         fragments = await extract_imagery(adapter, buckets)
     except (ImageryExtractionError, JsonModelError) as exc:
+        store.log_event("generate_failed", {
+            "reason": "imagery_extraction",
+            "detail": str(exc),
+            "at": now_iso(),
+        })
         return f"Night Fall skipped: imagery extraction failed ({exc})."
 
     mode = choose_dream_mode()
     try:
         dream_text, core_affect, recall_cues = await write_dream(adapter, buckets, fragments, mode)
     except (DreamWriterError, JsonModelError) as exc:
+        store.log_event("generate_failed", {
+            "reason": "dream_writing",
+            "detail": str(exc),
+            "at": now_iso(),
+        })
         return f"Night Fall skipped: dream writing failed ({exc})."
 
     source_ids = []
@@ -201,6 +216,14 @@ async def night_fall_tool(
         "recall_cues": recall_cues,
     }
     record = store.write(metadata, dream_text)
+    store.log_event("generated", {
+        "dream_id": record.dream_id,
+        "generated_at": metadata["generated_at"],
+        "dream_mode": mode,
+        "fragments": len(fragments),
+        "recall_cues": len(recall_cues),
+        "source_bucket_count": len(source_ids),
+    })
 
     # Embed recall_cues so the cue-channel can fire later. Graceful degradation:
     # if embedding fails (no API key, timeout), the dream still lives but only
