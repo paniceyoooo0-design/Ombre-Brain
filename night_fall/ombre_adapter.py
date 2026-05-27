@@ -191,7 +191,21 @@ class OmbreAdapter:
         # Preferred: tool_use block with structured input
         for block in response.content:
             if getattr(block, "type", "") == "tool_use" and getattr(block, "name", "") == tool_name:
-                return json.dumps(block.input, ensure_ascii=False)
+                block_input = block.input
+                # Defensive: some proxies serialize input as a JSON string
+                # instead of a dict. Pass strings through verbatim so the
+                # upstream json.loads can parse them.
+                if isinstance(block_input, str):
+                    return block_input
+                # Defensive: some proxies wrap the input in {"input": {...}}
+                # or {"arguments": {...}} — unwrap one level if so.
+                if isinstance(block_input, dict):
+                    inner = block_input.get("input") or block_input.get("arguments")
+                    if isinstance(inner, dict) and any(
+                        k not in ("input", "arguments", "name") for k in block_input.keys()
+                    ) is False and inner:
+                        block_input = inner
+                return json.dumps(block_input, ensure_ascii=False)
 
         # Fallback: some proxies may not relay tool_use blocks correctly; try
         # to recover plain text and let the upstream JSON parser have a go.

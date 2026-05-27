@@ -41,7 +41,13 @@ def _validate_fragments(raw, buckets: list[dict]) -> list[dict]:
     }
     fragments = []
     if not isinstance(raw, dict) or not isinstance(raw.get("imagery_fragments"), list):
-        raise ImageryExtractionError("Imagery extraction response did not match the JSON schema.")
+        raw_type = type(raw).__name__
+        keys = list(raw.keys()) if isinstance(raw, dict) else "n/a"
+        sample = repr(raw)[:300] if raw is not None else "None"
+        raise ImageryExtractionError(
+            f"Imagery extraction response did not match the JSON schema. "
+            f"raw_type={raw_type} keys={keys} sample={sample}"
+        )
     per_bucket: dict[str, int] = {}
     seen: set[tuple[str, str]] = set()
     for item in raw["imagery_fragments"]:
