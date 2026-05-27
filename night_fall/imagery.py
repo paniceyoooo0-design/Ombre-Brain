@@ -81,7 +81,29 @@ async def extract_imagery(adapter, buckets: list[dict]) -> list[dict]:
     }
     # temperature=0.0 — imagery extraction is verbatim copying, no creativity needed.
     # Higher temps led to paraphrasing that the verbatim validator silently dropped.
-    raw = await adapter.call_json_model(_prompt(), payload, max_tokens=700, temperature=0.0)
+    # schema — strict Tool Use schema so Claude can't return malformed structure.
+    schema = {
+        "type": "object",
+        "properties": {
+            "imagery_fragments": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 6,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "source_bucket_id": {"type": "string"},
+                        "excerpt": {"type": "string"},
+                    },
+                    "required": ["source_bucket_id", "excerpt"],
+                },
+            },
+        },
+        "required": ["imagery_fragments"],
+    }
+    raw = await adapter.call_json_model(
+        _prompt(), payload, max_tokens=700, temperature=0.0, schema=schema,
+    )
     fragments = _validate_fragments(raw, buckets)
     if len(fragments) < 2:
         raise ImageryExtractionError("Imagery extraction produced fewer than 2 verified fragments.")

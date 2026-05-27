@@ -68,7 +68,32 @@ async def write_dream(adapter, buckets: list[dict], fragments: list[dict], mode:
             for b in buckets
         ],
     }
-    raw = await adapter.call_json_model(_prompt(), payload, max_tokens=1100, temperature=0.8)
+    # Strict Tool Use schema — keep temperature=0.8 for creative dream writing
+    # but lock down the output structure so Claude can't misshape the JSON.
+    schema = {
+        "type": "object",
+        "properties": {
+            "dream_text": {"type": "string"},
+            "core_affect": {
+                "type": "object",
+                "properties": {
+                    "valence": {"type": "number"},
+                    "arousal": {"type": "number"},
+                },
+                "required": ["valence", "arousal"],
+            },
+            "recall_cues": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 5,
+                "items": {"type": "string"},
+            },
+        },
+        "required": ["dream_text", "core_affect", "recall_cues"],
+    }
+    raw = await adapter.call_json_model(
+        _prompt(), payload, max_tokens=1100, temperature=0.8, schema=schema,
+    )
     result = _validate(raw)
     if not result:
         raise DreamWriterError("Dream writer response did not match the JSON schema.")

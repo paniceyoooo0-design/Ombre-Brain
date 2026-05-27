@@ -51,6 +51,7 @@ class OmbreAdapter:
         *,
         max_tokens: int = 700,
         temperature: float = 0.7,
+        schema: dict | None = None,
     ) -> dict | list | None:
         raw_errors = []
         for _ in range(2):
@@ -59,6 +60,7 @@ class OmbreAdapter:
                 payload,
                 max_tokens=max_tokens,
                 temperature=temperature,
+                schema=schema,
             )
             cleaned = raw.strip()
             if cleaned.startswith("```"):
@@ -77,6 +79,7 @@ class OmbreAdapter:
         *,
         max_tokens: int,
         temperature: float,
+        schema: dict | None = None,
     ) -> str:
         provider = os.environ.get("NIGHT_FALL_LLM_PROVIDER", "").strip().lower()
         if not provider:
@@ -88,7 +91,10 @@ class OmbreAdapter:
                 payload,
                 max_tokens=max_tokens,
                 temperature=temperature,
+                schema=schema,
             )
+        # DeepSeek path ignores schema (no Tool Use enforcement); it relies on
+        # the prompt + post-parse validation in the upstream caller.
 
         dehydrator = self.dehydrator
         client = getattr(dehydrator, "client", None)
@@ -134,6 +140,7 @@ class OmbreAdapter:
         *,
         max_tokens: int,
         temperature: float,
+        schema: dict | None = None,
     ) -> str:
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not api_key:
@@ -151,10 +158,14 @@ class OmbreAdapter:
             client_kwargs["base_url"] = base_url
         client = AsyncAnthropic(**client_kwargs)
 
-        # Use Tool Use to guarantee well-formed JSON: the SDK enforces schema
-        # serialization, so the LLM cannot emit unescaped quotes or stray
-        # newlines that break json.loads.
+        # Use Tool Use to guarantee well-formed JSON. If the caller provides a
+        # schema, it's enforced by Anthropic's tool validation; otherwise we
+        # fall back to a permissive "any object" schema.
         tool_name = "submit_response"
+        input_schema = schema if schema is not None else {
+            "type": "object",
+            "additionalProperties": True,
+        }
         tool_instruction = (
             f"\n\nReturn your response by calling the `{tool_name}` tool. Pass "
             "the JSON structure described above as the tool's arguments — do "
@@ -168,10 +179,7 @@ class OmbreAdapter:
             tools=[{
                 "name": tool_name,
                 "description": "Submit the structured JSON response described in the system prompt.",
-                "input_schema": {
-                    "type": "object",
-                    "additionalProperties": True,
-                },
+                "input_schema": input_schema,
             }],
             tool_choice={"type": "tool", "name": tool_name},
             max_tokens=max_tokens,

@@ -11,17 +11,12 @@ Each `excerpt` MUST be a **character-for-character copy** of a contiguous substr
 
 A downstream validator will do exact string membership check (`excerpt in content`). **If your excerpt is not literally present in the source, it will be silently dropped.** If fewer than 2 fragments survive, the whole dream is skipped and nothing is generated.
 
-**Right ✅** (source contains "右手食指指尖有湿气"):
-```json
-{"source_bucket_id": "xxx", "excerpt": "右手食指指尖有湿气"}
-```
+**Example** — if source contains the phrase: "右手食指指尖有湿气"
 
-**Wrong ❌** (paraphrase — will be dropped):
-```json
-{"source_bucket_id": "xxx", "excerpt": "湿润的指尖"}
-{"source_bucket_id": "xxx", "excerpt": "手指有湿气"}     // 词序变了
-{"source_bucket_id": "xxx", "excerpt": "右手指尖湿气"}   // 删了字
-```
+- ✅ Right excerpt value: `"右手食指指尖有湿气"` (character-for-character)
+- ❌ Wrong (paraphrase, dropped by validator): `"湿润的指尖"`
+- ❌ Wrong (reordered, dropped): `"手指有湿气"`
+- ❌ Wrong (deleted char, dropped): `"右手指尖湿气"`
 
 **Allowed adjustments**:
 - Trimming leading/trailing whitespace
