@@ -204,6 +204,48 @@ def _nf_has_new_pending_dream(last_at):
         return False
 
 
+def _format_bucket_age(meta: dict) -> str:
+    """Return a human-readable '[age tag] ' prefix (with trailing space) for a
+    bucket header. Strategy:
+      < 24h:     [今天]
+      1-2 days:  [昨天] / [前天]
+      3-7 days:  [N天前]
+      8-30 days: [MM-DD, N周前]
+      > 30 days: [YYYY-MM-DD]
+    Returns '' when `created` is missing/unparseable so callers can concat
+    safely.
+    """
+    created_raw = meta.get("created") or meta.get("generated_at")
+    if not created_raw:
+        return ""
+    try:
+        text = str(created_raw).strip()
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        dt = datetime.fromisoformat(text)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        return ""
+    days = (datetime.now(timezone.utc) - dt).total_seconds() / 86400
+    if days < 0:
+        return ""
+    if days < 1:
+        tag = "今天"
+    elif days < 2:
+        tag = "昨天"
+    elif days < 3:
+        tag = "前天"
+    elif days < 8:
+        tag = f"{int(days)}天前"
+    elif days < 31:
+        weeks = max(1, int(days // 7))
+        tag = f"{dt.strftime('%m-%d')}, {weeks}周前"
+    else:
+        tag = dt.strftime("%Y-%m-%d")
+    return f"[{tag}] "
+
+
 async def _night_fall_breath_addendum(
     query: str, valence: float, arousal: float, is_session_start: bool = False
 ) -> str:
@@ -656,7 +698,7 @@ async def breath(
                 if token_used + t > max_tokens:
                     break
                 imp = b["metadata"].get("importance", 0)
-                results.append(f"[importance:{imp}] [bucket_id:{b['id']}] {summary}")
+                results.append(f"[importance:{imp}] {_format_bucket_age(b['metadata'])}[bucket_id:{b['id']}] {summary}")
                 token_used += t
             except Exception as e:
                 logger.warning(f"importance_min dehydrate failed: {e}")
@@ -682,7 +724,7 @@ async def breath(
             try:
                 clean_meta = {k: v for k, v in b["metadata"].items() if k != "tags"}
                 summary = await dehydrator.dehydrate(strip_wikilinks(b["content"]), clean_meta)
-                pinned_results.append(f"📌 [核心准则] [bucket_id:{b['id']}] {summary}")
+                pinned_results.append(f"📌 [核心准则] {_format_bucket_age(b['metadata'])}[bucket_id:{b['id']}] {summary}")
             except Exception as e:
                 logger.warning(f"Failed to dehydrate pinned bucket / 钉选桶脱水失败: {e}")
                 continue
@@ -757,7 +799,7 @@ async def breath(
                     break
                 # NOTE: no touch() here — surfacing should NOT reset decay timer
                 score = decay_engine.calculate_score(b["metadata"])
-                dynamic_results.append(f"[权重:{score:.2f}] [bucket_id:{b['id']}] {summary}")
+                dynamic_results.append(f"[权重:{score:.2f}] {_format_bucket_age(b['metadata'])}[bucket_id:{b['id']}] {summary}")
                 token_budget -= summary_tokens
             except Exception as e:
                 logger.warning(f"Failed to dehydrate surfaced bucket / 浮现脱水失败: {e}")
@@ -853,10 +895,11 @@ async def breath(
             if token_used + summary_tokens > max_tokens:
                 break
             await bucket_mgr.touch(bucket["id"])
+            age_prefix = _format_bucket_age(bucket["metadata"])
             if bucket.get("vector_match"):
-                summary = f"[语义关联] [bucket_id:{bucket['id']}] {summary}"
+                summary = f"[语义关联] {age_prefix}[bucket_id:{bucket['id']}] {summary}"
             else:
-                summary = f"[bucket_id:{bucket['id']}] {summary}"
+                summary = f"{age_prefix}[bucket_id:{bucket['id']}] {summary}"
             results.append(summary)
             token_used += summary_tokens
         except Exception as e:
@@ -880,7 +923,7 @@ async def breath(
                 for b in drifted:
                     clean_meta = {k: v for k, v in b["metadata"].items() if k != "tags"}
                     summary = await dehydrator.dehydrate(strip_wikilinks(b["content"]), clean_meta)
-                    drift_results.append(f"[surface_type: random]\n{summary}")
+                    drift_results.append(f"[surface_type: random] {_format_bucket_age(b['metadata'])}\n{summary}")
                 results.append("--- 忽然想起来 ---\n" + "\n---\n".join(drift_results))
         except Exception as e:
             logger.warning(f"Random surfacing failed / 随机浮现失败: {e}")
