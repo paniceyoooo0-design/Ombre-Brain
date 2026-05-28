@@ -19,6 +19,11 @@ Actions:
 - history: Return the most recent N events from the lifecycle log
   (generated / surfaced / deleted / generate_failed). Pass limit=N to
   control how many (default 20). For debugging / auditing.
+- peek: Non-destructive read of pending dreams in the pool. Returns full
+  metadata + body, newest first. Does NOT consume surface_attempts and does
+  NOT delete. Intended for design iteration / introspection — bypasses the
+  "dream as resonant moment" experience by design, so use sparingly. Pass
+  limit=N for how many dreams (default 5).
 
 When to call surface (the breath discipline):
 - Right after breath, at the start of a new conversation
@@ -43,8 +48,9 @@ hold(content=...) explicitly. Otherwise it disappears permanently after this
 turn.
 
 Args:
-- action: generate | surface | status | cleanup | history
-- limit: max number of events for action="history" (default 20)
+- action: generate | surface | status | cleanup | history | peek
+- limit: max number of items for action="history" (default 20) or
+  action="peek" (default 5)
 - query: contextual phrase or motif from the current conversation (surface only)
 - current_valence / current_arousal: 0..1, -1 means unspecified (surface only)
 - is_session_start: pass true on the first breath of a new conversation

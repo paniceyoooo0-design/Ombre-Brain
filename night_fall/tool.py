@@ -154,6 +154,38 @@ async def night_fall_tool(
     if action_name == "history":
         return _format_history(cfg, limit=limit)
 
+    if action_name == "peek":
+        records = [r for r in store.list() if not r.surfaced]
+        records.sort(key=lambda r: r.generated_at, reverse=True)
+        n = max(1, min(int(limit or 5), 20))
+        slice_ = records[:n]
+        if not slice_:
+            return "Night Fall peek: pool is empty (no pending dreams)."
+        out = [f"Night Fall peek: showing {len(slice_)} of {len(records)} pending dreams (newest first).",
+               "Note: this is non-destructive inspection. Does not consume attempts or delete.",
+               ""]
+        for r in slice_:
+            meta = r.metadata
+            affect = meta.get("core_affect", {}) or {}
+            cues = meta.get("recall_cues", []) or []
+            try:
+                age_h = (now - r.generated_at).total_seconds() / 3600
+            except Exception:
+                age_h = -1
+            out.append(f"━━━ {r.dream_id} ━━━")
+            out.append(f"generated_at: {meta.get('generated_at')}  (age {age_h:.1f}h)")
+            out.append(f"mode: {meta.get('dream_mode')}")
+            try:
+                out.append(f"core_affect: valence={float(affect.get('valence', 0.5)):.2f} arousal={float(affect.get('arousal', 0.3)):.2f}")
+            except Exception:
+                out.append(f"core_affect: {affect}")
+            out.append(f"surface_attempts: {meta.get('surface_attempts', 0)} / 4")
+            out.append(f"recall_cues: {' ｜ '.join(cues)}")
+            out.append("")
+            out.append(r.body)
+            out.append("")
+        return "\n".join(out)
+
     if action_name == "status":
         status = store.status(now)
         oldest = status["oldest_pending_age_hours"]
