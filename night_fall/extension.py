@@ -16,6 +16,9 @@ Actions:
 - status: Report counts of pending / surfaced / deleted dreams.
 - cleanup: Remove dreams that have been considered but not picked
   MAX_SURFACE_ATTEMPTS times.
+- history: Return the most recent N events from the lifecycle log
+  (generated / surfaced / deleted / generate_failed). Pass limit=N to
+  control how many (default 20). For debugging / auditing.
 
 When to call surface (the breath discipline):
 - Right after breath, at the start of a new conversation
@@ -40,7 +43,8 @@ hold(content=...) explicitly. Otherwise it disappears permanently after this
 turn.
 
 Args:
-- action: generate | surface | status | cleanup
+- action: generate | surface | status | cleanup | history
+- limit: max number of events for action="history" (default 20)
 - query: contextual phrase or motif from the current conversation (surface only)
 - current_valence / current_arousal: 0..1, -1 means unspecified (surface only)
 - is_session_start: pass true on the first breath of a new conversation
@@ -62,6 +66,7 @@ def register_night_fall(ombre_server, cfg: NightFallConfig) -> None:
         current_motifs: str = "",
         is_session_start: bool = False,
         debug: bool = False,
+        limit: int = 20,
     ) -> str:
         return await night_fall_tool(
             ombre_server,
@@ -73,6 +78,7 @@ def register_night_fall(ombre_server, cfg: NightFallConfig) -> None:
             current_motifs=current_motifs,
             is_session_start=is_session_start,
             debug=debug,
+            limit=limit,
         )
 
     night_fall.__doc__ = _NIGHT_FALL_DOC

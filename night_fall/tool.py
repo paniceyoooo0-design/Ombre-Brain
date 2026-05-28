@@ -26,6 +26,54 @@ def _storage(cfg: NightFallConfig) -> DreamStorage:
     return DreamStorage(cfg.dreams_dir, cfg.logs_dir)
 
 
+def _format_history(cfg: NightFallConfig, limit: int = 20) -> str:
+    """Tail the events.jsonl log and format the most recent entries for humans."""
+    import json as _json
+    log_path = cfg.logs_dir / "events.jsonl"
+    if not log_path.exists():
+        return "Night Fall history: events.jsonl does not exist yet (no events recorded)."
+    try:
+        lines = log_path.read_text(encoding="utf-8").splitlines()
+    except Exception as exc:
+        return f"Night Fall history: failed to read events.jsonl ({exc})."
+    if not lines:
+        return "Night Fall history: events.jsonl is empty."
+    n = max(1, min(int(limit or 20), 200))
+    recent = lines[-n:]
+    parsed = []
+    for line in recent:
+        try:
+            parsed.append(_json.loads(line))
+        except Exception:
+            parsed.append({"event": "_parse_error", "raw": line[:200]})
+
+    out = [f"Night Fall history (last {len(parsed)} of {len(lines)} events):"]
+    for entry in parsed:
+        event = entry.get("event", "?")
+        # Pick a sensible timestamp field per event type
+        ts = (
+            entry.get("at")
+            or entry.get("generated_at")
+            or entry.get("surfaced_at")
+            or entry.get("deleted_at")
+            or "?"
+        )
+        dream_id = entry.get("dream_id", "")[:20] if entry.get("dream_id") else ""
+        # Format extras based on event type
+        if event == "generated":
+            extra = f"mode={entry.get('dream_mode','?')} frags={entry.get('fragments','?')} cues={entry.get('recall_cues','?')}"
+        elif event == "generate_failed":
+            extra = f"reason={entry.get('reason','?')} detail={str(entry.get('detail',''))[:80]}"
+        elif event == "surfaced":
+            extra = f"spontaneous={entry.get('spontaneous','?')}"
+        elif event == "deleted":
+            extra = f"reason={entry.get('deletion_reason','?')}"
+        else:
+            extra = ""
+        out.append(f"  {ts}  {event:18s}  {dream_id:22s}  {extra}")
+    return "\n".join(out)
+
+
 def _format_surface_response(record, spontaneous: bool) -> str:
     affect = record.metadata.get("core_affect", {})
     cues = record.metadata.get("recall_cues") or []
@@ -96,11 +144,15 @@ async def night_fall_tool(
     current_motifs: str = "",
     is_session_start: bool = False,
     debug: bool = False,
+    limit: int = 20,
 ) -> str:
     action_name = (action or "generate").strip().lower()
     store = _storage(cfg)
     adapter = OmbreAdapter(ombre_server)
     now = now_utc()
+
+    if action_name == "history":
+        return _format_history(cfg, limit=limit)
 
     if action_name == "status":
         status = store.status(now)

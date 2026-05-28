@@ -764,14 +764,17 @@ async def breath(
                 continue
 
         if not pinned_results and not dynamic_results:
-            return "权重池平静，没有需要处理的记忆。"
+            nf_addendum = await _night_fall_breath_addendum(query, valence, arousal, is_session_start)
+            return "权重池平静，没有需要处理的记忆。" + nf_addendum
 
         parts = []
         if pinned_results:
             parts.append("=== 核心准则 ===\n" + "\n---\n".join(pinned_results))
         if dynamic_results:
             parts.append("=== 浮现记忆 ===\n" + "\n---\n".join(dynamic_results))
-        return "\n\n".join(parts)
+        base_text = "\n\n".join(parts)
+        nf_addendum = await _night_fall_breath_addendum(query, valence, arousal, is_session_start)
+        return base_text + nf_addendum
 
     # --- Feel retrieval: domain="feel" is a special channel ---
     # --- Feel 检索：domain="feel" 是独立入口 ---
