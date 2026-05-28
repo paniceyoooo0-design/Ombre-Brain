@@ -4,56 +4,39 @@ from .config import NightFallConfig
 from .tool import get_surfaceable_dream, night_fall_tool
 
 
-_NIGHT_FALL_DOC = """Night Fall latent dream lifecycle.
+_NIGHT_FALL_DOC = """Night Fall latent dream lifecycle (v2 — morning-window surface).
 
 Actions:
 - generate: Create a new latent dream from emotional Ombre memories. Typically
-  called at session end or low-activity moments.
-- surface: Manual / debugging entry point. Normal dream surfacing happens
-  automatically inside breath (v1) — Claude does not need to call this in the
-  regular flow. Returns at most one surfaced dream, in a dedicated section
-  prefixed by "=== 浮上来的梦 ===".
-- status: Report counts of pending / surfaced / deleted dreams.
-- cleanup: Remove dreams that have been considered but not picked
-  MAX_SURFACE_ATTEMPTS times.
-- history: Return the most recent N events from the lifecycle log
-  (generated / surfaced / deleted / generate_failed). Pass limit=N to
-  control how many (default 20). For debugging / auditing.
-- peek: Non-destructive read of pending dreams in the pool. Returns full
-  metadata + body, newest first. Does NOT consume surface_attempts and does
-  NOT delete. Intended for design iteration / introspection — bypasses the
-  "dream as resonant moment" experience by design, so use sparingly. Pass
-  limit=N for how many dreams (default 5).
+  called at session end (after grow).
+- surface: Try to surface a dream. Two parallel paths:
+  (A) Morning-window roll — first breath in a new local-time window
+      (default 04:00 UTC+8) has cfg.morning_surface_prob (~50%) chance to
+      produce a dream, chosen by arousal-weighted sampling from the pool.
+  (B) Resonance — if query/affect provided, dreams whose recall_cues / affect
+      match strongly may surface independently.
+  Normally invoked indirectly via breath; Claude doesn't need to call
+  this manually.
+- status: Counts of pending / surfaced / deleted dreams.
+- cleanup: (Mostly inactive in v2 since attempts aren't counted) — removes
+  dreams whose surface_attempts reached MAX_SURFACE_ATTEMPTS.
+- history: Most recent N events from the lifecycle log. Pass limit=N (default 20).
+- peek: Non-destructive read of PENDING dreams. limit=N (default 5).
+- seen: Non-destructive read of SURFACED dreams (the "record book"). Surfaced
+  dreams are kept in the pool with surfaced=True after delivery — they don't
+  re-surface, but you can browse them here. limit=N (default 5).
 
-When to call surface (the breath discipline):
-- Right after breath, at the start of a new conversation
-  (pass is_session_start=true).
-- Right after breath, when the conversation has shifted to a register where
-  past memories would genuinely inform your response — i.e., when you find
-  yourself wanting to look back, not when checking status.
-- Right after breath, when the current context carries emotional weight that
-  may resonate with past experiences.
-
-When NOT to call surface:
-- On every turn as a status check.
-- When the conversation is in a routine functional register that does not
-  invite recall (e.g., debugging code, fetching factual information).
-- Multiple times in quick succession without new context having developed.
-
-surface without query/valence/arousal and without is_session_start does
-nothing — dreams only resonate with contextual moments.
-
-A surfaced dream is delivered once. If you want to keep it, call
-hold(content=...) explicitly. Otherwise it disappears permanently after this
-turn.
+A surfaced dream is delivered once via normal flow. If you want to promote
+it into a permanent Ombre bucket (so it participates in regular breath /
+weight pool), call hold(content=...) explicitly. Otherwise it stays in the
+Night-Fall record book for browsing but does not enter Ombre memory.
 
 Args:
-- action: generate | surface | status | cleanup | history | peek
-- limit: max number of items for action="history" (default 20) or
-  action="peek" (default 5)
-- query: contextual phrase or motif from the current conversation (surface only)
+- action: generate | surface | status | cleanup | history | peek | seen
+- limit: max items for history (default 20), peek/seen (default 5)
+- query: contextual phrase from current conversation (surface only)
 - current_valence / current_arousal: 0..1, -1 means unspecified (surface only)
-- is_session_start: pass true on the first breath of a new conversation
+- is_session_start: passed through but no longer required for surface eligibility
 - current_motifs: deprecated, retained for compatibility
 - debug: include diagnostic info in the response
 """

@@ -249,11 +249,12 @@ def _format_bucket_age(meta: dict) -> str:
 async def _night_fall_breath_addendum(
     query: str, valence: float, arousal: float, is_session_start: bool = False
 ) -> str:
-    """Return text to append to breath's response: surfaced dream + new-dream hint."""
+    """Return text to append to breath's response. v2 mechanism: only the
+    surfaced dream itself (if any). No more "（做了一个梦）" notification —
+    the new morning-window surface handles "knowing about dreams" directly
+    by delivering them when they fire."""
     if not NIGHT_FALL_ENABLED:
         return ""
-    parts: list[str] = []
-    last_at = _nf_read_last_breath_at()
     try:
         surface_result = await night_fall_tool(
             ombre_server, night_fall_cfg,
@@ -263,14 +264,11 @@ async def _night_fall_breath_addendum(
             current_arousal=arousal,
             is_session_start=is_session_start,
         )
-        if surface_result and surface_result.startswith("=== 浮上来的梦"):
-            parts.append(surface_result)
+        if surface_result and surface_result.startswith("=== 昨夜的梦"):
+            return "\n---\n" + surface_result
     except Exception as e:
         logger.warning(f"[Night Fall] surface failed: {e}")
-    if _nf_has_new_pending_dream(last_at):
-        parts.append("（做了一个梦）")
-    _nf_write_last_breath_now()
-    return ("\n---\n" + "\n---\n".join(parts)) if parts else ""
+    return ""
 
 
 # =============================================================

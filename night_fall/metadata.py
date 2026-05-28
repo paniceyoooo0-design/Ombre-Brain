@@ -60,7 +60,7 @@ def clamp01(value: object, default: float = 0.5) -> float:
 def choose_dream_mode() -> str:
     return random.choices(
         population=["integrative", "fragmentary", "residual"],
-        weights=[0.70, 0.20, 0.10],
+        weights=[0.50, 0.35, 0.15],
         k=1,
     )[0]
 

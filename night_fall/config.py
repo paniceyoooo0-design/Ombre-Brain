@@ -17,8 +17,12 @@ class NightFallConfig:
     surface_threshold: float = 0.62
     attempt_threshold: float = 0.45
     alpha_subordinate: float = 0.25
-    spontaneous_surface_prob: float = 0.02
+    spontaneous_surface_prob: float = 0.02  # legacy, unused after morning-window redesign
     selection_limit: int = 5
+    # Morning-window surface mechanism:
+    morning_surface_prob: float = 0.5  # P(any dream surfaces on first breath in new morning window)
+    morning_window_hour: int = 4  # local-time hour that opens a new window
+    morning_window_tz_offset: int = 8  # UTC offset for the local clock above
 
     @property
     def dreams_dir(self) -> Path:
@@ -136,6 +140,18 @@ def load_config(require_ombre: bool = True) -> NightFallConfig:
             _float_env("NIGHT_FALL_SPONTANEOUS_CHANCE", spontaneous_default),
         ),
         selection_limit=_int_env("NIGHT_FALL_SELECTION_LIMIT", int(raw.get("selection_limit", 5))),
+        morning_surface_prob=_float_env(
+            "NIGHT_FALL_MORNING_SURFACE_PROB",
+            float(raw.get("morning_surface_prob", 0.5)),
+        ),
+        morning_window_hour=_int_env(
+            "NIGHT_FALL_MORNING_WINDOW_HOUR",
+            int(raw.get("morning_window_hour", 4)),
+        ),
+        morning_window_tz_offset=_int_env(
+            "NIGHT_FALL_MORNING_WINDOW_TZ_OFFSET",
+            int(raw.get("morning_window_tz_offset", 8)),
+        ),
     )
     if cfg.attempt_threshold >= cfg.surface_threshold:
         raise ValueError(

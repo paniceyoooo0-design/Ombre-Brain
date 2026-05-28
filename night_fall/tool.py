@@ -79,7 +79,7 @@ def _format_surface_response(record, spontaneous: bool) -> str:
     cues = record.metadata.get("recall_cues") or []
     cues_text = "｜".join(cues) if cues else "(none)"
     return (
-        "=== 浮上来的梦 ===\n"
+        "=== 昨夜的梦 ===\n"
         f"dream_id: {record.dream_id}\n"
         f"mode: {record.metadata.get('dream_mode')}\n"
         f"spontaneous: {str(bool(spontaneous)).lower()}\n"
@@ -90,10 +90,12 @@ def _format_surface_response(record, spontaneous: bool) -> str:
     )
 
 
-def _emit_and_destroy(store: DreamStorage, adapter: OmbreAdapter, record, spontaneous: bool):
-    """Mark the dream as surfaced, write the lifecycle event, then physically
-    destroy the dream so it cannot resurface or quietly persist. Spec section 6:
-    'unheld surfaced dream does not enter any persistent layer'.
+def _emit_and_keep(store: DreamStorage, adapter: OmbreAdapter, record, spontaneous: bool):
+    """Mark the dream as surfaced + log the event, but DO NOT delete the file.
+    The dream stays in the pool with surfaced=True; subsequent surface
+    evaluations filter it out (DreamRecord.surfaced), so it won't re-fire.
+    Surfaced dreams remain queryable via night_fall(action='seen') — a
+    'dream record book' rather than a one-shot ephemeral.
     """
     surfaced_record = store.update(
         record,
@@ -110,14 +112,58 @@ def _emit_and_destroy(store: DreamStorage, adapter: OmbreAdapter, record, sponta
             "spontaneous": bool(spontaneous),
         },
     )
-    store.delete(surfaced_record, reason="surfaced_one_shot")
-    engine = getattr(adapter, "embedding_engine", None)
-    if engine is not None:
-        try:
-            engine.delete_embedding(surfaced_record.dream_id)
-        except Exception as exc:
-            logger.warning(f"Failed to delete embedding for {surfaced_record.dream_id}: {exc}")
+    # Embedding is kept too so future search / re-surfacing logic can reference
+    # the dream's cues if needed.
     return _format_surface_response(surfaced_record, spontaneous)
+
+
+# ---------- morning-window helpers ----------
+
+def _morning_window_id(now_utc, cfg) -> str:
+    """Return a stable ID for which 'morning window' the given UTC datetime
+    falls into. A window opens at `morning_window_hour` local time; anything
+    before that attaches to the previous calendar day's window."""
+    from datetime import timedelta
+    local = now_utc + timedelta(hours=cfg.morning_window_tz_offset)
+    effective = local - timedelta(hours=cfg.morning_window_hour)
+    return effective.strftime("%Y-%m-%d")
+
+
+def _window_marker_path(cfg):
+    return cfg.logs_dir / "last_morning_window.json"
+
+
+def _read_last_window(cfg) -> str | None:
+    try:
+        import json as _json
+        data = _json.loads(_window_marker_path(cfg).read_text(encoding="utf-8"))
+        return data.get("window")
+    except Exception:
+        return None
+
+
+def _write_window_consumed(cfg, window_id: str):
+    try:
+        import json as _json
+        _window_marker_path(cfg).write_text(
+            _json.dumps({"window": window_id, "at": now_iso()}), encoding="utf-8"
+        )
+    except Exception as exc:
+        logger.warning(f"[Night Fall] failed to write window marker: {exc}")
+
+
+def _arousal_weighted_pick(pending):
+    """Pick one record from `pending`, weighted by arousal. Floor of 0.05 so
+    even very calm dreams have nonzero chance."""
+    weights = []
+    for r in pending:
+        affect = r.metadata.get("core_affect", {}) or {}
+        try:
+            a = float(affect.get("arousal", 0.3))
+        except Exception:
+            a = 0.3
+        weights.append(max(0.05, a))
+    return random.choices(pending, weights=weights, k=1)[0]
 
 
 async def _query_embedding(adapter: OmbreAdapter, query: str) -> list[float] | None:
@@ -186,6 +232,36 @@ async def night_fall_tool(
             out.append("")
         return "\n".join(out)
 
+    if action_name == "seen":
+        records = [r for r in store.list() if r.surfaced]
+        records.sort(key=lambda r: r.metadata.get("surfaced_at") or "", reverse=True)
+        n = max(1, min(int(limit or 5), 50))
+        slice_ = records[:n]
+        if not slice_:
+            return "Night Fall seen: no surfaced dreams in the record book yet."
+        out = [
+            f"Night Fall seen: {len(slice_)} of {len(records)} surfaced dreams (newest first).",
+            "These dreams have already been delivered once; they sit in the record book.",
+            "",
+        ]
+        for r in slice_:
+            meta = r.metadata
+            affect = meta.get("core_affect", {}) or {}
+            cues = meta.get("recall_cues", []) or []
+            out.append(f"━━━ {r.dream_id} ━━━")
+            out.append(f"generated_at: {meta.get('generated_at')}")
+            out.append(f"surfaced_at:  {meta.get('surfaced_at')}")
+            out.append(f"mode: {meta.get('dream_mode')}  spontaneous: {meta.get('spontaneous')}")
+            try:
+                out.append(f"core_affect: valence={float(affect.get('valence', 0.5)):.2f} arousal={float(affect.get('arousal', 0.3)):.2f}")
+            except Exception:
+                out.append(f"core_affect: {affect}")
+            out.append(f"recall_cues: {' ｜ '.join(cues)}")
+            out.append("")
+            out.append(r.body)
+            out.append("")
+        return "\n".join(out)
+
     if action_name == "status":
         status = store.status(now)
         oldest = status["oldest_pending_age_hours"]
@@ -203,8 +279,10 @@ async def night_fall_tool(
         return f"Night Fall cleanup complete: {deleted} exhausted unsurfaced dream(s) deleted."
 
     if action_name == "surface":
-        if not is_eligible_breath(query, current_valence, current_arousal, is_session_start):
-            return "Breath not contextual — no dream surfacing this turn."
+        # New surface mechanism (v2):
+        # Two parallel paths — morning-window roll (primary) + resonance (secondary).
+        # No eligibility gate, no per-breath spontaneous, no attempt-counting.
+        # Surfaced dreams stay in the pool with surfaced=True (record book), not deleted.
 
         pending = [
             r for r in store.list()
@@ -213,38 +291,34 @@ async def night_fall_tool(
         if not pending:
             return "No latent dream surfaced."
 
-        query_emb = await _query_embedding(adapter, query)
-        evaluated = await evaluate_pending(
-            pending, cfg, query_emb, current_valence, current_arousal, adapter
-        )
+        # --- Path A: morning window roll ---
+        # First breath in a new "morning window" (local time, default 04:00 UTC+8)
+        # has cfg.morning_surface_prob chance of producing a dream. If yes, pick
+        # one weighted by arousal (more intense → more likely to be chosen).
+        current_window = _morning_window_id(now, cfg)
+        last_window = _read_last_window(cfg)
+        if current_window != last_window:
+            _write_window_consumed(cfg, current_window)  # consume the window regardless
+            if random.random() < cfg.morning_surface_prob:
+                chosen = _arousal_weighted_pick(pending)
+                return _emit_and_keep(store, adapter, chosen, spontaneous=False)
 
-        # Step 1: increment surface_attempts only for dreams whose top channel
-        # passes the attempt_threshold. Low-signal breaths do not consume the
-        # dream's chance (spec section 3 DESIGN INTENT).
-        for item in evaluated:
-            if item["top"] >= cfg.attempt_threshold:
-                record = item["record"]
-                new_attempts = int(record.metadata.get("surface_attempts", 0)) + 1
-                item["record"] = store.update(record, surface_attempts=new_attempts)
+        # --- Path B: resonance ---
+        # When the user provides query / affect, evaluate whether any dream's
+        # cues/affect strongly match. No attempt counting (mechanism retired).
+        if query.strip() or (0 <= current_valence <= 1 and 0 <= current_arousal <= 1):
+            query_emb = await _query_embedding(adapter, query)
+            evaluated = await evaluate_pending(
+                pending, cfg, query_emb, current_valence, current_arousal, adapter
+            )
+            best = None
+            for item in evaluated:
+                if item["score"] >= cfg.surface_threshold:
+                    if best is None or item["score"] > best[0]:
+                        best = (item["score"], item)
+            if best is not None:
+                return _emit_and_keep(store, adapter, best[1]["record"], spontaneous=False)
 
-        # Step 2: pick best candidate above surface_threshold.
-        best = None  # (score, item)
-        for item in evaluated:
-            if item["score"] >= cfg.surface_threshold:
-                if best is None or item["score"] > best[0]:
-                    best = (item["score"], item)
-
-        if best is not None:
-            return _emit_and_destroy(store, adapter, best[1]["record"], spontaneous=False)
-
-        # Step 3: spontaneous fallback — each pending dream independently has a
-        # small chance to surface even without resonance.
-        for item in evaluated:
-            if random.random() < cfg.spontaneous_surface_prob:
-                return _emit_and_destroy(store, adapter, item["record"], spontaneous=True)
-
-        # Step 4: real deletion for dreams that have exhausted their attempts.
-        store.cleanup_exhausted()
         return "No latent dream surfaced."
 
     if action_name != "generate":
