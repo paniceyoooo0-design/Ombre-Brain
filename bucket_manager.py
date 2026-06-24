@@ -291,6 +291,14 @@ class BucketManager:
         if "model_valence" in kwargs:
             post["model_valence"] = max(0.0, min(1.0, float(kwargs["model_valence"])))
 
+        # --- Passthrough for extra metadata (letter/plan/i/anchor) ---
+        # --- 额外元数据透传（letter/plan/i/anchor 用）---
+        for _ek in ("anchor", "status", "change_log", "related_bucket",
+                    "weight", "why_remembered", "dont_surface",
+                    "author", "title", "letter_date", "aspect"):
+            if _ek in kwargs:
+                post[_ek] = kwargs[_ek]
+
         # --- Auto-refresh activation time / 自动刷新激活时间 ---
         post["last_active"] = now_iso()
 
@@ -315,6 +323,40 @@ class BucketManager:
 
         logger.info(f"Updated bucket / 更新记忆桶: {bucket_id}")
         return True
+
+    # ---------------------------------------------------------
+    # Anchor flag — coordinate-system buckets, hard cap 24
+    # 坐标系锚点标记，硬上限 24
+    # ---------------------------------------------------------
+    async def count_anchors(self) -> int:
+        """Count buckets currently flagged anchor=True."""
+        all_b = await self.list_all(include_archive=False)
+        return sum(1 for b in all_b if b.get("metadata", {}).get("anchor"))
+
+    async def set_anchor(self, bucket_id: str, value: bool) -> dict:
+        """
+        Toggle the anchor flag on an existing bucket. Hard-rejects at cap 24.
+        切换桶的 anchor 标记；设为 True 且已满 24 时拒绝。
+        Returns {"ok", "anchor", "count", "limit", "error"?, "noop"?}.
+        """
+        limit = 24
+        bucket = await self.get(bucket_id)
+        if not bucket:
+            return {"ok": False, "error": "bucket not found", "count": 0, "limit": limit}
+        current = bool(bucket["metadata"].get("anchor", False))
+        target = bool(value)
+        if current == target:
+            return {"ok": True, "anchor": target, "count": await self.count_anchors(),
+                    "limit": limit, "noop": True}
+        if target:
+            count = await self.count_anchors()
+            if count >= limit:
+                return {"ok": False, "count": count, "limit": limit,
+                        "error": f"anchor 已达上限 {limit}，请先 release 一条再锚新的。"}
+        ok = await self.update(bucket_id, anchor=target)
+        if not ok:
+            return {"ok": False, "error": "update failed", "count": 0, "limit": limit}
+        return {"ok": True, "anchor": target, "count": await self.count_anchors(), "limit": limit}
 
     # ---------------------------------------------------------
     # Wikilink injection — DISABLED

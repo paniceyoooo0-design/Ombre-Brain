@@ -771,6 +771,7 @@ async def breath(
             and not b["metadata"].get("pinned", False)
             and not b["metadata"].get("protected", False)
             and not b["metadata"].get("dont_surface", False)
+            and not b["metadata"].get("anchor", False)
         ]
 
         logger.info(
@@ -1566,6 +1567,192 @@ async def letter_read(query: str = "", limit: int = 10, author: str = "", date_f
         title_tag = f" · {title}" if title and title != b["id"] else ""
         parts.append(f"[{b['id']}] {who} · {d}{title_tag}\n{strip_wikilinks(b['content'] or '')}")
     return "=== 信 💌 ===\n" + "\n\n---\n\n".join(parts)
+
+
+# =============================================================
+# I — 自我认知 / self-knowledge
+# 我写下关于我自己的认识，独立于关系记忆；不衰减、不浮现于普通 breath，
+# 会话开始时由 breath 自动带最近 3 条。
+# =============================================================
+@mcp.tool()
+async def I(content: str = "", aspect: str = "", read: bool = False, limit: int = 20) -> str:
+    """我写下关于我自己的认识：content=我观察到自己是什么/有什么规律/我在变成什么（留空=进入读取模式）。aspect=维度 nature(本质)/values(我重视的)/patterns(规律)/limits(局限)/becoming(我在变成什么)/uncertainty(我不确定的)/stance(立场)，也可自由维度。read=True 读取全部已积累的自我认知。I 条目不参与普通 breath/dream，会话开始时自动带最近几条。"""
+    await decay_engine.ensure_started()
+    content = (content or "").strip()
+    aspect = (aspect or "").strip()
+
+    if read or not content:
+        try:
+            all_b = await bucket_mgr.list_all(include_archive=False)
+        except Exception as e:
+            return f"读取失败: {e}"
+        i_b = [b for b in all_b if b["metadata"].get("type") == "i"]
+        if not i_b:
+            return "还没有任何自我认知记录。"
+        i_b.sort(key=lambda b: b["metadata"].get("last_active") or b["metadata"].get("created", ""), reverse=True)
+        i_b = i_b[:max(1, min(50, limit))]
+        lines = [f"=== 我的自我认知（{len(i_b)} 条）==="]
+        for b in i_b:
+            m = b["metadata"]
+            tags = m.get("tags") or []
+            asp = next((t.replace("aspect:", "") for t in tags if t.startswith("aspect:")), "") or (m.get("aspect") or "")
+            ts = (m.get("last_active") or m.get("created", ""))[:10]
+            asp_label = f"[{asp}] " if asp else ""
+            lines.append(f"\n{ts} {asp_label}{b['id']}\n{(b.get('content') or '').strip()}")
+        return "\n".join(lines)
+
+    tags = ["__i__"]
+    if aspect:
+        tags.append(f"aspect:{aspect}")
+    extra = {"dont_surface": True}
+    if aspect:
+        extra["aspect"] = aspect
+    try:
+        bucket_id = await bucket_mgr.create(
+            content=content, tags=tags, importance=6, domain=["self"],
+            valence=0.5, arousal=0.3, bucket_type="i", extra_meta=extra,
+        )
+    except Exception as e:
+        return f"写入失败: {e}"
+    try:
+        await embedding_engine.generate_and_store(bucket_id, content)
+    except Exception:
+        pass
+    asp_label = f"[{aspect}] " if aspect else ""
+    return f"🪞 I {asp_label}→ {bucket_id}"
+
+
+# =============================================================
+# plan — 待办 / 承诺 / 未闭环的事
+# 不衰减、不浮现于普通 breath。plan 登记 / plan_list 查看 / plan_update 改状态。
+# =============================================================
+def _plan_log_entry(action: str, to: str = "") -> dict:
+    entry = {"at": datetime.now().isoformat(timespec="seconds"), "action": action}
+    if to:
+        entry["to"] = to
+    return entry
+
+
+@mcp.tool()
+async def plan(content: str = "", status: str = "active", related_bucket: str = "", weight: float = 0.5, why_remembered: str = "") -> str:
+    """登记一个待办/承诺/未闭环的事——我答应过、答应自己或想完成的。status=active(默认)/resolved/abandoned。weight=承诺的重量 0-1（与 importance 不同：importance 是「多重要」、weight 是「多重」）。related_bucket/why_remembered 可选。plan 不衰减、不出现在普通 breath；用 plan_list 查看、plan_update 改状态。同正文的 active plan 不重复登记。"""
+    await decay_engine.ensure_started()
+    content = (content or "").strip()
+    if not content:
+        return "内容为空，无法登记计划。"
+    status = (status or "active").strip().lower()
+    if status not in ("active", "resolved", "abandoned"):
+        status = "active"
+    try:
+        weight = max(0.0, min(1.0, float(weight) if weight is not None else 0.5))
+    except (TypeError, ValueError):
+        weight = 0.5
+
+    try:
+        for b in await bucket_mgr.list_all(include_archive=False):
+            m = b["metadata"]
+            if m.get("type") == "plan" and m.get("status", "active") == "active" and (b.get("content") or "").strip() == content:
+                return f"跟原有 active plan 完全重复 → {b['id']}（未重复登记）"
+    except Exception as e:
+        logger.warning(f"plan dedup scan failed: {e}")
+
+    extra = {"status": status, "weight": weight, "dont_surface": True,
+             "change_log": [_plan_log_entry("created", to=status)]}
+    if (related_bucket or "").strip():
+        extra["related_bucket"] = related_bucket.strip()
+    if (why_remembered or "").strip():
+        extra["why_remembered"] = why_remembered.strip()[:500]
+    try:
+        bucket_id = await bucket_mgr.create(
+            content=content, tags=["__plan__"], importance=7, domain=["plan"],
+            valence=0.5, arousal=0.4, bucket_type="plan", extra_meta=extra,
+        )
+    except Exception as e:
+        return f"登记失败: {e}"
+    try:
+        await embedding_engine.generate_and_store(bucket_id, content)
+    except Exception:
+        pass
+    return f"📋 plan → {bucket_id} [{status}]"
+
+
+@mcp.tool()
+async def plan_list(status: str = "") -> str:
+    """查看计划。status 可选（active/resolved/abandoned）过滤，留空看全部。按时间倒序。"""
+    await decay_engine.ensure_started()
+    try:
+        all_b = await bucket_mgr.list_all(include_archive=False)
+    except Exception as e:
+        return f"读取计划失败: {e}"
+    plans = [b for b in all_b if b["metadata"].get("type") == "plan"]
+    f = (status or "").strip().lower()
+    if f in ("active", "resolved", "abandoned"):
+        plans = [b for b in plans if b["metadata"].get("status", "active") == f]
+    if not plans:
+        return "没有计划。"
+    plans.sort(key=lambda b: b["metadata"].get("created", ""), reverse=True)
+    icons = {"active": "🔵", "resolved": "✅", "abandoned": "⚪"}
+    lines = [f"=== 计划（{len(plans)} 条）==="]
+    for b in plans:
+        m = b["metadata"]
+        st = m.get("status", "active")
+        w = float(m.get("weight") or 0.5)
+        lines.append(f"{icons.get(st, '📋')} [{b['id']}] [{st}] 重量{w:.1f}\n{(b.get('content') or '').strip()}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def plan_update(bucket_id: str, status: str = "", note: str = "") -> str:
+    """更新一个计划：改 status（active/resolved/abandoned）和/或追加一条变更说明 note。两者至少给一个。"""
+    b = await bucket_mgr.get(bucket_id)
+    if not b or b["metadata"].get("type") != "plan":
+        return "没找到这个计划。"
+    m = b["metadata"]
+    log = m.get("change_log") or []
+    if not isinstance(log, list):
+        log = []
+    updates = {}
+    new_status = (status or "").strip().lower()
+    if new_status in ("active", "resolved", "abandoned"):
+        log.append(_plan_log_entry("status", to=new_status))
+        updates["status"] = new_status
+    note = (note or "").strip()
+    if note:
+        log.append(_plan_log_entry(f"note: {note[:200]}"))
+    if not updates and not note:
+        return "没有要更新的内容（status 或 note 至少给一个）。"
+    updates["change_log"] = log
+    ok = await bucket_mgr.update(bucket_id, **updates)
+    if not ok:
+        return "更新失败。"
+    return f"📋 plan {bucket_id} 已更新 → {updates.get('status', m.get('status', 'active'))}"
+
+
+# =============================================================
+# anchor / release — 坐标系锚点
+# 把某条已存在的桶钉为关系/身份基准点：不主动浮现于默认 breath，
+# 但 query 命中仍返回，且永不衰减。硬上限 24。
+# =============================================================
+@mcp.tool()
+async def anchor(bucket_id: str) -> str:
+    """把这条已存在的桶设为 anchor（坐标系/身份基准点）。anchor 不主动浮现在默认 breath，但 query 命中仍会返回，且永不衰减归档。硬上限 24，满了要先 release。"""
+    r = await bucket_mgr.set_anchor(bucket_id, True)
+    if not r.get("ok"):
+        return f"没能锚住。{r.get('error', '未知错误')}（当前 {r.get('count', '?')}/{r.get('limit', 24)}）"
+    if r.get("noop"):
+        return f"它已经是 anchor 了。当前 {r['count']}/{r['limit']}。"
+    return f"⚓ 已锚住，它现在是坐标系的一部分，不会被默认浮现挤进上下文。当前 {r['count']}/{r['limit']}。"
+
+
+@mcp.tool()
+async def release(bucket_id: str) -> str:
+    """把这条桶从 anchor 释放，它重新参与默认 breath 浮现与衰减。"""
+    r = await bucket_mgr.set_anchor(bucket_id, False)
+    if not r.get("ok"):
+        return f"释放失败。{r.get('error', '未知错误')}"
+    if r.get("noop"):
+        return f"它本来就不是 anchor。当前 {r['count']}/{r['limit']}。"
+    return f"已从 anchor 释放。当前 {r['count']}/{r['limit']}。"
 
 
 # =============================================================

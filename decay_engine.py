@@ -116,6 +116,11 @@ class DecayEngine:
         if metadata.get("type") in ("letter", "plan", "i"):
             return 999.0
 
+        # --- Anchor buckets: coordinate-system references, never decay/archive ---
+        # --- 锚点桶：身份/关系坐标系，永不衰减归档（比上游多的一处保护）---
+        if metadata.get("anchor"):
+            return 999.0
+
         importance = max(1, min(10, int(metadata.get("importance") or 5)))
         activation_count = max(1.0, float(metadata.get("activation_count") or 1))
 
