@@ -110,6 +110,7 @@ class BucketManager:
         name: str = None,
         pinned: bool = False,
         protected: bool = False,
+        extra_meta: dict = None,
     ) -> str:
         """
         Create a new memory bucket, return bucket ID.
@@ -152,6 +153,13 @@ class BucketManager:
             metadata["pinned"] = True
         if protected:
             metadata["protected"] = True
+
+        # --- Merge caller-supplied extra metadata (letter/plan/i: author/title/etc) ---
+        # --- 合并调用方额外元数据（letter/plan/i 用：author/title 等），不覆盖核心字段 ---
+        if extra_meta:
+            for _k, _v in extra_meta.items():
+                if _k not in metadata:
+                    metadata[_k] = _v
 
         # --- Assemble Markdown file (frontmatter + body) ---
         # --- 组装 Markdown 文件 ---

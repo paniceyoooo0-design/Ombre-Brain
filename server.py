@@ -652,6 +652,40 @@ async def _merge_or_create(
 # With args: search by keyword + emotion coordinates
 # 有参数：按关键词+情感坐标检索记忆
 # =============================================================
+async def _letters_breath_addendum(is_session_start: bool) -> str:
+    """会话开始时，把双方各自最近一封信带进上下文（你给我的 / 我给你的）。"""
+    if not is_session_start:
+        return ""
+    try:
+        all_buckets = await bucket_mgr.list_all(include_archive=False)
+    except Exception:
+        return ""
+    letters = [b for b in all_buckets if b["metadata"].get("type") == "letter"]
+    if not letters:
+        return ""
+
+    def _ldate(b):
+        m = b["metadata"]
+        return m.get("letter_date") or m.get("created", "")
+
+    lines = []
+    for tag, who in (("你给我的最近一封", "user"), ("我给你的最近一封", "claude")):
+        pool = [b for b in letters if b["metadata"].get("author") == who]
+        if not pool:
+            continue
+        pool.sort(key=_ldate, reverse=True)
+        latest = pool[0]
+        m = latest["metadata"]
+        d = (m.get("letter_date") or m.get("created", ""))[:10]
+        title = m.get("title") or m.get("name", "") or ""
+        title_tag = f" 《{title}》" if title and title != latest["id"] else ""
+        excerpt = strip_wikilinks(latest["content"] or "").strip()[:400]
+        lines.append(f"【{tag}】{d}{title_tag} [bucket_id:{latest['id']}]\n{excerpt}")
+    if not lines:
+        return ""
+    return "\n\n=== 最近的信 💌 ===\n" + "\n\n".join(lines)
+
+
 @mcp.tool()
 async def breath(
     query: str = "",
@@ -678,7 +712,8 @@ async def breath(
         filtered = [
             b for b in all_buckets
             if int(b["metadata"].get("importance") or 0) >= importance_min
-            and b["metadata"].get("type") not in ("feel",)
+            and b["metadata"].get("type") not in ("feel", "letter", "plan", "i")
+            and not b["metadata"].get("dont_surface", False)
         ]
         filtered.sort(key=lambda b: int(b["metadata"].get("importance") or 0), reverse=True)
         filtered = filtered[:20]
@@ -732,9 +767,10 @@ async def breath(
         unresolved = [
             b for b in all_buckets
             if not b["metadata"].get("resolved", False)
-            and b["metadata"].get("type") not in ("permanent", "feel")
+            and b["metadata"].get("type") not in ("permanent", "feel", "letter", "plan", "i")
             and not b["metadata"].get("pinned", False)
             and not b["metadata"].get("protected", False)
+            and not b["metadata"].get("dont_surface", False)
         ]
 
         logger.info(
@@ -805,7 +841,8 @@ async def breath(
 
         if not pinned_results and not dynamic_results:
             nf_addendum = await _night_fall_breath_addendum(query, valence, arousal, is_session_start)
-            return "权重池平静，没有需要处理的记忆。" + nf_addendum
+            letters_addendum = await _letters_breath_addendum(is_session_start)
+            return "权重池平静，没有需要处理的记忆。" + letters_addendum + nf_addendum
 
         parts = []
         if pinned_results:
@@ -814,7 +851,8 @@ async def breath(
             parts.append("=== 浮现记忆 ===\n" + "\n---\n".join(dynamic_results))
         base_text = "\n\n".join(parts)
         nf_addendum = await _night_fall_breath_addendum(query, valence, arousal, is_session_start)
-        return base_text + nf_addendum
+        letters_addendum = await _letters_breath_addendum(is_session_start)
+        return base_text + letters_addendum + nf_addendum
 
     # --- Feel retrieval: domain="feel" is a special channel ---
     # --- Feel 检索：domain="feel" 是独立入口 ---
@@ -934,7 +972,8 @@ async def breath(
         await _fire_webhook("breath", {"mode": "ok", "matches": len(matches), "chars": len(base_text)})
 
     nf_addendum = await _night_fall_breath_addendum(query, valence, arousal, is_session_start)
-    return base_text + nf_addendum
+    letters_addendum = await _letters_breath_addendum(is_session_start)
+    return base_text + letters_addendum + nf_addendum
 
 
 # =============================================================
@@ -1424,6 +1463,168 @@ async def dream() -> str:
     final_text = header + "\n---\n".join(parts) + connection_hint + crystal_hint
     await _fire_webhook("dream", {"recent": len(recent), "chars": len(final_text)})
     return final_text
+
+
+# =============================================================
+# Letter tools — 写信 / 读信
+# 你我之间的长信：永久保存、不衰减、不合并、不浮现于普通 breath；
+# 仅在会话开始时由 breath 自动带出双方各自最近一封。author 只能 user/claude。
+# =============================================================
+async def _letter_write_core(author: str, content: str, title: str = "", date: str = "") -> tuple:
+    """核心写信逻辑，供 MCP 工具与 REST 路由共用。返回 (ok, message, bucket_id)。"""
+    await decay_engine.ensure_started()
+    a = (author or "").strip().lower()
+    if a not in ("user", "claude"):
+        return False, "author 必须是 'user'（旖宁）或 'claude'（小克）。", None
+    if not content or not content.strip():
+        return False, "信件内容不能为空。", None
+
+    extra = {"author": a, "dont_surface": True}
+    clean_title = (title or "").strip()[:120]
+    if clean_title:
+        extra["title"] = clean_title
+    if (date or "").strip():
+        extra["letter_date"] = date.strip()
+
+    try:
+        bucket_id = await bucket_mgr.create(
+            content=content.strip(),
+            tags=["__letter__"],
+            importance=10,
+            domain=["letter"],
+            valence=0.5,
+            arousal=0.3,
+            bucket_type="letter",
+            name=(clean_title or None),
+            extra_meta=extra,
+        )
+    except Exception as e:
+        logger.warning(f"letter_write failed: {e}")
+        return False, f"写入失败: {e}", None
+
+    try:
+        await embedding_engine.generate_and_store(bucket_id, content.strip())
+    except Exception:
+        pass
+
+    who = "旖宁→小克" if a == "user" else "小克→旖宁"
+    return True, f"💌 信已存 [{who}] → {bucket_id}", bucket_id
+
+
+@mcp.tool()
+async def letter_write(author: str, content: str, title: str = "", date: str = "") -> str:
+    """写一封信，永久保存、不衰减、不合并。author 必须是 'user'（旖宁写给小克）或 'claude'（小克写给旖宁）。title/date（YYYY-MM-DD）可选。每次会话开始时双方各自最近一封会自动浮现。"""
+    _ok, msg, _bid = await _letter_write_core(author, content, title, date)
+    return msg
+
+
+@mcp.tool()
+async def letter_read(query: str = "", limit: int = 10, author: str = "", date_from: str = "", date_to: str = "") -> str:
+    """读信，返回完整原文。默认按时间倒序；带 query 走语义近邻搜索；可按 author（user/claude）与 date_from/date_to（YYYY-MM-DD）过滤。"""
+    await decay_engine.ensure_started()
+    limit = max(1, min(50, limit))
+    try:
+        all_b = await bucket_mgr.list_all(include_archive=False)
+    except Exception as e:
+        return f"读取信件失败: {e}"
+    letters = [b for b in all_b if b["metadata"].get("type") == "letter"]
+    a = (author or "").strip().lower()
+    if a in ("user", "claude"):
+        letters = [b for b in letters if b["metadata"].get("author") == a]
+
+    def _within(b):
+        d = b["metadata"].get("letter_date") or b["metadata"].get("created", "")
+        if date_from and d and d < date_from:
+            return False
+        if date_to and d and d > date_to:
+            return False
+        return True
+
+    letters = [b for b in letters if _within(b)]
+
+    if query and query.strip() and embedding_engine and getattr(embedding_engine, "enabled", False):
+        try:
+            sims = await embedding_engine.search_similar(query, top_k=limit * 3)
+            id_score = {bid: sc for bid, sc in sims}
+            letters.sort(key=lambda b: id_score.get(b["id"], 0.0), reverse=True)
+        except Exception as e:
+            logger.warning(f"letter_read vector search failed: {e}")
+            letters.sort(key=lambda b: b["metadata"].get("created", ""), reverse=True)
+    else:
+        letters.sort(key=lambda b: b["metadata"].get("letter_date") or b["metadata"].get("created", ""), reverse=True)
+
+    letters = letters[:limit]
+    if not letters:
+        return "还没有信。"
+    parts = []
+    for b in letters:
+        m = b["metadata"]
+        a2 = m.get("author", "?")
+        who = "旖宁→小克" if a2 == "user" else ("小克→旖宁" if a2 == "claude" else a2)
+        d = (m.get("letter_date") or m.get("created", ""))[:10]
+        title = m.get("title") or m.get("name", "") or ""
+        title_tag = f" · {title}" if title and title != b["id"] else ""
+        parts.append(f"[{b['id']}] {who} · {d}{title_tag}\n{strip_wikilinks(b['content'] or '')}")
+    return "=== 信 💌 ===\n" + "\n\n---\n\n".join(parts)
+
+
+# =============================================================
+# Letter REST endpoints (for 书房 frontend)
+# 书房前端用：GET 列信（书架）/ POST 写信（书桌）
+# =============================================================
+@mcp.custom_route("/api/letters", methods=["GET"])
+async def api_letters(request):
+    """List letters newest-first. Optional ?author=user|claude filter."""
+    from starlette.responses import JSONResponse
+    err = _require_auth(request)
+    if err:
+        return err
+    try:
+        all_b = await bucket_mgr.list_all(include_archive=False)
+        letters = [b for b in all_b if b["metadata"].get("type") == "letter"]
+        author = (request.query_params.get("author") or "").strip().lower()
+        if author in ("user", "claude"):
+            letters = [b for b in letters if b["metadata"].get("author") == author]
+        letters.sort(
+            key=lambda b: b["metadata"].get("letter_date") or b["metadata"].get("created", ""),
+            reverse=True,
+        )
+        result = []
+        for b in letters:
+            m = b["metadata"]
+            result.append({
+                "id": b["id"],
+                "author": m.get("author", "?"),
+                "title": m.get("title") or m.get("name", "") or "",
+                "date": (m.get("letter_date") or m.get("created", ""))[:10],
+                "created": m.get("created", ""),
+                "content": strip_wikilinks(b.get("content", "") or ""),
+            })
+        return JSONResponse({"letters": result, "total": len(result)})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@mcp.custom_route("/api/letter", methods=["POST"])
+async def api_letter_create(request):
+    """Create a letter from the 书房 write-desk. Body: {author, content, title?, date?}."""
+    from starlette.responses import JSONResponse
+    err = _require_auth(request)
+    if err:
+        return err
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    ok, msg, bid = await _letter_write_core(
+        data.get("author", ""),
+        data.get("content", ""),
+        data.get("title", ""),
+        data.get("date", ""),
+    )
+    if not ok:
+        return JSONResponse({"error": msg}, status_code=400)
+    return JSONResponse({"ok": True, "id": bid, "message": msg})
 
 
 # =============================================================

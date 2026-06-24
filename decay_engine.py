@@ -111,6 +111,11 @@ class DecayEngine:
         if metadata.get("type") == "feel":
             return 50.0
 
+        # --- Letter / plan / i buckets: never decay (permanent, deliberate) ---
+        # --- 信件 / 计划 / 自我认知：永不衰减归档 ---
+        if metadata.get("type") in ("letter", "plan", "i"):
+            return 999.0
+
         importance = max(1, min(10, int(metadata.get("importance") or 5)))
         activation_count = max(1.0, float(metadata.get("activation_count") or 1))
 
