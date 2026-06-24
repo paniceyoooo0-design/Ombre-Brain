@@ -361,7 +361,7 @@ class BucketManager:
         try:
             post = frontmatter.load(file_path)
             post["last_active"] = now_iso()
-            post["activation_count"] = post.get("activation_count", 0) + 1
+            post["activation_count"] = (post.get("activation_count") or 0) + 1
 
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(frontmatter.dumps(post))
@@ -410,7 +410,7 @@ class BucketManager:
                     continue
                 try:
                     post = frontmatter.load(file_path)
-                    current_count = post.get("activation_count", 1)
+                    current_count = post.get("activation_count") or 1
                     # Store as float for fractional increments; calculate_score handles it
                     post["activation_count"] = round(current_count + 0.3, 1)
                     with open(file_path, "w", encoding="utf-8") as f:
@@ -508,7 +508,7 @@ class BucketManager:
                 time_score = self._calc_time_score(meta)
 
                 # Dim 4: importance (direct normalization)
-                importance_score = max(1, min(10, int(meta.get("importance", 5)))) / 10.0
+                importance_score = max(1, min(10, int(meta.get("importance") or 5))) / 10.0
 
                 # --- Weighted sum / 加权求和 ---
                 total = (

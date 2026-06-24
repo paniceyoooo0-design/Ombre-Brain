@@ -56,7 +56,7 @@ def normalize_bucket(bucket: dict, now: datetime) -> NormalizedBucket:
         recent_score=math.exp(-age / 3.0),
         unresolved_score=0.0 if resolved else 1.0,
         undigested_like_score=1.0 if _has_field(meta, "digested") and not digested else 0.0,
-        importance_score=clamp01(float(meta.get("importance", 5)) / 10.0, 0.5),
+        importance_score=clamp01(float(meta.get("importance") or 5) / 10.0, 0.5),
     )
 
 

@@ -558,7 +558,7 @@ async def dream_hook(request):
             resolved_tag = "[已解决]" if meta.get("resolved", False) else "[未解决]"
             parts.append(
                 f"{meta.get('name', b['id'])} {resolved_tag} "
-                f"V{meta.get('valence', 0.5):.1f}/A{meta.get('arousal', 0.3):.1f}\n"
+                f"V{float(meta.get('valence') or 0.5):.1f}/A{float(meta.get('arousal') or 0.3):.1f}\n"
                 f"{strip_wikilinks(b['content'][:200])}"
             )
 
@@ -604,15 +604,15 @@ async def _merge_or_create(
         if not (bucket["metadata"].get("pinned") or bucket["metadata"].get("protected")):
             try:
                 merged = await dehydrator.merge(bucket["content"], content)
-                old_v = bucket["metadata"].get("valence", 0.5)
-                old_a = bucket["metadata"].get("arousal", 0.3)
-                merged_valence = round((old_v + valence) / 2, 2)
-                merged_arousal = round((old_a + arousal) / 2, 2)
+                old_v = bucket["metadata"].get("valence")
+                old_a = bucket["metadata"].get("arousal")
+                merged_valence = round((old_v + valence) / 2, 2) if old_v is not None else valence
+                merged_arousal = round((old_a + arousal) / 2, 2) if old_a is not None else arousal
                 await bucket_mgr.update(
                     bucket["id"],
                     content=merged,
                     tags=list(set(bucket["metadata"].get("tags", []) + tags)),
-                    importance=max(bucket["metadata"].get("importance", 5), importance),
+                    importance=max(int(bucket["metadata"].get("importance") or 5), importance),
                     domain=list(set(bucket["metadata"].get("domain", []) + domain)),
                     valence=merged_valence,
                     arousal=merged_arousal,
@@ -677,10 +677,10 @@ async def breath(
             return f"记忆系统暂时无法访问: {e}"
         filtered = [
             b for b in all_buckets
-            if int(b["metadata"].get("importance", 0)) >= importance_min
+            if int(b["metadata"].get("importance") or 0) >= importance_min
             and b["metadata"].get("type") not in ("feel",)
         ]
-        filtered.sort(key=lambda b: int(b["metadata"].get("importance", 0)), reverse=True)
+        filtered.sort(key=lambda b: int(b["metadata"].get("importance") or 0), reverse=True)
         filtered = filtered[:20]
         if not filtered:
             return f"没有重要度 >= {importance_min} 的记忆。"
@@ -695,7 +695,7 @@ async def breath(
                 t = count_tokens_approx(summary)
                 if token_used + t > max_tokens:
                     break
-                imp = b["metadata"].get("importance", 0)
+                imp = b["metadata"].get("importance") or 0
                 results.append(f"[importance:{imp}] {_format_bucket_age(b['metadata'])}[bucket_id:{b['id']}] {summary}")
                 token_used += t
             except Exception as e:
@@ -756,8 +756,8 @@ async def breath(
         # --- 冷启动检测：从未被访问过且重要度>=8的桶优先插入最前面（最多2个）---
         cold_start = [
             b for b in unresolved
-            if int(b["metadata"].get("activation_count", 0)) == 0
-            and int(b["metadata"].get("importance", 0)) >= 8
+            if int(b["metadata"].get("activation_count") or 0) == 0
+            and int(b["metadata"].get("importance") or 0) >= 8
         ][:2]
         cold_start_ids = {b["id"] for b in cold_start}
         # Merge: cold_start first, then scored (excluding duplicates)
@@ -885,7 +885,7 @@ async def breath(
             # --- Memory reconstruction: shift displayed valence by current mood ---
             # --- 记忆重构：根据当前情绪微调展示层 valence（±0.1）---
             if q_valence is not None and "valence" in clean_meta:
-                original_v = float(clean_meta.get("valence", 0.5))
+                original_v = float(clean_meta.get("valence") or 0.5)
                 shift = (q_valence - 0.5) * 0.2  # ±0.1 max shift
                 clean_meta["valence"] = max(0.0, min(1.0, original_v + shift))
             summary = await dehydrator.dehydrate(strip_wikilinks(bucket["content"]), clean_meta)
@@ -1089,7 +1089,7 @@ async def grow(content: str) -> str:
         )
         action = "合并" if is_merged else "新建"
         _maybe_dream()
-        return f"{action} → {result_name} | {','.join(analysis.get('domain', []))} V{analysis.get('valence', 0.5):.1f}/A{analysis.get('arousal', 0.3):.1f}"
+        return f"{action} → {result_name} | {','.join(analysis.get('domain', []))} V{float(analysis.get('valence') or 0.5):.1f}/A{float(analysis.get('arousal') or 0.3):.1f}"
 
     # --- Step 1: let API split and organize / 让 API 拆分整理 ---
     try:
@@ -1280,15 +1280,15 @@ async def pulse(include_archive: bool = False) -> str:
         except Exception:
             score = 0.0
         domains = ",".join(meta.get("domain", []))
-        val = meta.get("valence", 0.5)
-        aro = meta.get("arousal", 0.3)
+        val = float(meta.get("valence") or 0.5)
+        aro = float(meta.get("arousal") or 0.3)
         resolved_tag = " [已解决]" if meta.get("resolved", False) else ""
         lines.append(
             f"{icon} [{meta.get('name', b['id'])}]{resolved_tag} "
             f"bucket_id:{b['id']} "
             f"主题:{domains} "
             f"情感:V{val:.1f}/A{aro:.1f} "
-            f"重要:{meta.get('importance', '?')} "
+            f"重要:{meta.get('importance') or '?'} "
             f"权重:{score:.2f} "
             f"标签:{','.join(meta.get('tags', []))}"
         )
@@ -1336,8 +1336,8 @@ async def dream() -> str:
         meta = b["metadata"]
         resolved_tag = " [已解决]" if meta.get("resolved", False) else " [未解决]"
         domains = ",".join(meta.get("domain", []))
-        val = meta.get("valence", 0.5)
-        aro = meta.get("arousal", 0.3)
+        val = float(meta.get("valence") or 0.5)
+        aro = float(meta.get("arousal") or 0.3)
         created = meta.get("created", "")
         parts.append(
             f"[{meta.get('name', b['id'])}]{resolved_tag} "
@@ -1588,7 +1588,7 @@ async def api_breath_debug(request):
                 topic = bucket_mgr._calc_topic_score(query, bucket) if query else 0.0
                 emotion = bucket_mgr._calc_emotion_score(q_valence, q_arousal, meta)
                 time_s = bucket_mgr._calc_time_score(meta)
-                imp = max(1, min(10, int(meta.get("importance", 5)))) / 10.0
+                imp = max(1, min(10, int(meta.get("importance") or 5))) / 10.0
 
                 raw_total = (
                     topic * w["topic"]

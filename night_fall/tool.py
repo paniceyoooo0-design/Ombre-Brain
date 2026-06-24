@@ -83,8 +83,8 @@ def _format_surface_response(record, spontaneous: bool) -> str:
         f"dream_id: {record.dream_id}\n"
         f"mode: {record.metadata.get('dream_mode')}\n"
         f"spontaneous: {str(bool(spontaneous)).lower()}\n"
-        f"core_affect: valence={float(affect.get('valence', 0.5)):.2f}, "
-        f"arousal={float(affect.get('arousal', 0.3)):.2f}\n"
+        f"core_affect: valence={float(affect.get('valence') or 0.5):.2f}, "
+        f"arousal={float(affect.get('arousal') or 0.3):.2f}\n"
         f"recall_cues: {cues_text}\n\n"
         f"{record.body}"
     )
@@ -222,7 +222,7 @@ async def night_fall_tool(
             out.append(f"generated_at: {meta.get('generated_at')}  (age {age_h:.1f}h)")
             out.append(f"mode: {meta.get('dream_mode')}")
             try:
-                out.append(f"core_affect: valence={float(affect.get('valence', 0.5)):.2f} arousal={float(affect.get('arousal', 0.3)):.2f}")
+                out.append(f"core_affect: valence={float(affect.get('valence') or 0.5):.2f} arousal={float(affect.get('arousal') or 0.3):.2f}")
             except Exception:
                 out.append(f"core_affect: {affect}")
             out.append(f"surface_attempts: {meta.get('surface_attempts', 0)} / 4")
@@ -253,7 +253,7 @@ async def night_fall_tool(
             out.append(f"surfaced_at:  {meta.get('surfaced_at')}")
             out.append(f"mode: {meta.get('dream_mode')}  spontaneous: {meta.get('spontaneous')}")
             try:
-                out.append(f"core_affect: valence={float(affect.get('valence', 0.5)):.2f} arousal={float(affect.get('arousal', 0.3)):.2f}")
+                out.append(f"core_affect: valence={float(affect.get('valence') or 0.5):.2f} arousal={float(affect.get('arousal') or 0.3):.2f}")
             except Exception:
                 out.append(f"core_affect: {affect}")
             out.append(f"recall_cues: {' ｜ '.join(cues)}")

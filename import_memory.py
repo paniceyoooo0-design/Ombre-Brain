@@ -649,16 +649,16 @@ class ImportEngine:
                 try:
                     merged = await self.dehydrator.merge(bucket["content"], content)
                     self.state.data["api_calls"] += 1
-                    old_v = bucket["metadata"].get("valence", 0.5)
-                    old_a = bucket["metadata"].get("arousal", 0.3)
+                    old_v = bucket["metadata"].get("valence")
+                    old_a = bucket["metadata"].get("arousal")
                     await self.bucket_mgr.update(
                         bucket["id"],
                         content=merged,
                         tags=list(set(bucket["metadata"].get("tags", []) + tags)),
-                        importance=max(bucket["metadata"].get("importance", 5), importance),
+                        importance=max(int(bucket["metadata"].get("importance") or 5), importance),
                         domain=list(set(bucket["metadata"].get("domain", []) + domain)),
-                        valence=round((old_v + valence) / 2, 2),
-                        arousal=round((old_a + arousal) / 2, 2),
+                        valence=round((old_v + valence) / 2, 2) if old_v is not None else valence,
+                        arousal=round((old_a + arousal) / 2, 2) if old_a is not None else arousal,
                     )
                     if self.embedding_engine:
                         try:
