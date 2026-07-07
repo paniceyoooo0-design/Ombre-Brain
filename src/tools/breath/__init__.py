@@ -34,6 +34,7 @@ from .feel import surface_feels
 from .importance import surface_by_importance
 from .surface import surface_default
 from .search import surface_search
+from .addendum import breath_addendums
 
 
 async def dispatch(
@@ -46,6 +47,7 @@ async def dispatch(
     importance_min: Optional[int] = -1,
     tags: Optional[str] = "",
     catalog: Optional[bool] = False,
+    is_session_start: Optional[bool] = False,
 ) -> str:
     # --- Null-safe coercion ---
     if query is None: query = ""
@@ -57,6 +59,7 @@ async def dispatch(
     if importance_min is None: importance_min = -1
     if tags is None: tags = ""
     if catalog is None: catalog = False
+    if is_session_start is None: is_session_start = False
 
     if rt.mark_op:
         rt.mark_op("breath")
@@ -110,14 +113,16 @@ async def dispatch(
 
     # --- 无 query：浮现模式 ---
     if not query or not query.strip():
-        return await surface_default(
+        base_text = await surface_default(
             max_results=max_results,
             max_tokens=max_tokens,
             tag_filter=tag_filter,
         )
+        # 二改：末尾追加「最近的信」（session start）+「昨夜的梦」（Night-Fall）
+        return base_text + await breath_addendums(query, valence, arousal, is_session_start)
 
     # --- 有 query：检索模式 ---
-    return await surface_search(
+    base_text = await surface_search(
         query=query,
         max_results=max_results,
         max_tokens=max_tokens,
@@ -126,3 +131,4 @@ async def dispatch(
         arousal=arousal,
         tag_filter=tag_filter,
     )
+    return base_text + await breath_addendums(query, valence, arousal, is_session_start)

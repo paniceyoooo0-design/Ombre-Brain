@@ -33,3 +33,7 @@ jieba>=0.42.1
 # 本地 Ollama 安装包 .tar.zst 安全解压
 zstandard>=0.22.0
 
+
+# 二改（Night-Fall 梦境扩展，vendor 在 src/night_fall/）：
+# Anthropic SDK 用于让 Claude 自己写梦
+anthropic>=0.40.0

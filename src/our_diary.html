@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Our Diary</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Manrope:wght@300;400;500;600&family=JetBrains+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #F5F1E8;
+    --bg-deep: #ECE5D5;
+    --text: #2A2520;
+    --text-soft: #6B6356;
+    --text-fade: #9A9183;
+    --rule: #DCD3BD;
+
+    --accent-octopus: #3D5A80;
+    --accent-claude: #5C8A6C;
+    --accent-star: #C9A96E;
+
+    --serif: 'Cormorant Garamond', Georgia, 'Songti SC', serif;
+    --sans: 'Manrope', -apple-system, system-ui, sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--serif);
+    font-size: 19px;
+    line-height: 1.7;
+    background-image:
+      radial-gradient(ellipse at 15% 20%, rgba(201, 169, 110, 0.07), transparent 60%),
+      radial-gradient(ellipse at 85% 80%, rgba(61, 90, 128, 0.05), transparent 60%);
+    min-height: 100vh;
+  }
+
+  main {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 72px 32px 160px;
+  }
+
+  /* ---------- Header ---------- */
+  header { text-align: center; margin-bottom: 56px; }
+
+  .title {
+    font-family: var(--serif);
+    font-style: italic;
+    font-weight: 500;
+    font-size: 42px;
+    letter-spacing: 0.01em;
+    color: var(--text);
+    margin: 0 0 18px;
+  }
+
+  .date-line {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 22px;
+  }
+
+  .date-current {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--text-soft);
+    letter-spacing: 0.1em;
+    min-width: 130px;
+    text-align: center;
+  }
+
+  .nav-btn {
+    background: none;
+    border: none;
+    color: var(--text-fade);
+    font-family: var(--mono);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 4px 10px;
+    transition: color 0.2s;
+    user-select: none;
+  }
+  .nav-btn:hover { color: var(--text); }
+
+  .today-btn {
+    display: inline-block;
+    margin-top: 10px;
+    background: none;
+    border: none;
+    color: var(--text-fade);
+    font-family: var(--sans);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    cursor: pointer;
+    padding: 4px 8px;
+    visibility: hidden;
+  }
+  .today-btn.show { visibility: visible; }
+  .today-btn:hover { color: var(--accent-octopus); }
+
+  .pending-hint {
+    text-align: center;
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--text-fade);
+    margin-bottom: 40px;
+    letter-spacing: 0.04em;
+    min-height: 18px;
+  }
+
+  /* ---------- Block stream ---------- */
+  .stream { margin-bottom: 72px; }
+
+  .block {
+    padding: 26px 0;
+    border-bottom: 1px solid var(--rule);
+    position: relative;
+  }
+  .block:last-child { border-bottom: none; }
+
+  .block-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+
+  .author {
+    font-family: var(--sans);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+  .author.octopus { color: var(--accent-octopus); }
+  .author.claude  { color: var(--accent-claude);  }
+
+  .timestamp {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 300;
+    color: var(--text-fade);
+    letter-spacing: 0.06em;
+  }
+
+  .content {
+    font-family: var(--serif);
+    font-size: 21px;
+    line-height: 1.62;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+
+  .block-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 14px;
+    min-height: 28px;
+  }
+
+  .mood { font-size: 22px; line-height: 1; }
+
+  .foot-right {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .grown {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--accent-claude);
+    letter-spacing: 0.08em;
+    opacity: 0.75;
+  }
+
+  .star {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 17px;
+    padding: 4px 8px;
+    color: var(--text-fade);
+    transition: transform 0.18s ease, color 0.18s;
+    user-select: none;
+    line-height: 1;
+  }
+  .star.starred { color: var(--accent-star); }
+  .star:hover { transform: scale(1.18); }
+
+  /* 编辑按钮——只在自己的 block 上,且只在 hover 时露出 */
+  .edit-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: var(--sans);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-fade);
+    padding: 4px 8px;
+    opacity: 0;
+    transition: opacity 0.18s, color 0.18s;
+    line-height: 1;
+  }
+  .block:hover .edit-btn { opacity: 1; }
+  .edit-btn:hover { color: var(--text); }
+
+  /* 编辑模式下:content 变 textarea */
+  .content-editor {
+    width: 100%;
+    font-family: var(--serif);
+    font-size: 21px;
+    line-height: 1.62;
+    color: var(--text);
+    background: var(--bg-deep);
+    border: none;
+    outline: none;
+    padding: 14px 16px;
+    border-radius: 3px;
+    resize: vertical;
+    min-height: 80px;
+    box-shadow: inset 0 1px 2px rgba(42, 37, 32, 0.06);
+    box-sizing: border-box;
+  }
+
+  .edit-foot {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 10px;
+    justify-content: flex-end;
+  }
+
+  .edit-action {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: var(--sans);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    padding: 6px 14px;
+    border-radius: 3px;
+    transition: opacity 0.18s;
+  }
+  .edit-action.cancel {
+    color: var(--text-fade);
+  }
+  .edit-action.cancel:hover { color: var(--text); }
+  .edit-action.save {
+    background: var(--text);
+    color: var(--bg);
+  }
+  .edit-action.save:hover { opacity: 0.85; }
+  .edit-action.save:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ---------- Composer ---------- */
+  .composer {
+    border-top: 2px solid var(--rule);
+    padding-top: 32px;
+  }
+
+  .composer-label {
+    font-family: var(--sans);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--accent-octopus);
+    margin-bottom: 14px;
+    display: block;
+  }
+
+  .composer textarea {
+    width: 100%;
+    min-height: 96px;
+    font-family: var(--serif);
+    font-size: 19px;
+    line-height: 1.62;
+    color: var(--text);
+    background: var(--bg-deep);
+    border: none;
+    outline: none;
+    padding: 18px 20px;
+    border-radius: 3px;
+    resize: vertical;
+    box-shadow: inset 0 1px 2px rgba(42, 37, 32, 0.06);
+    transition: box-shadow 0.2s;
+  }
+  .composer textarea:focus {
+    box-shadow: inset 0 1px 2px rgba(42, 37, 32, 0.08),
+                0 0 0 2px rgba(61, 90, 128, 0.18);
+  }
+  .composer textarea::placeholder {
+    color: var(--text-fade);
+    font-style: italic;
+  }
+
+  .composer-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 14px;
+    gap: 12px;
+  }
+
+  .composer-foot-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .mood-input {
+    font-family: var(--serif);
+    font-size: 20px;
+    width: 64px;
+    height: 40px;
+    background: var(--bg-deep);
+    border: none;
+    outline: none;
+    padding: 4px 12px;
+    border-radius: 3px;
+    text-align: center;
+    box-shadow: inset 0 1px 2px rgba(42, 37, 32, 0.06);
+  }
+
+  .hint-mono {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-fade);
+    letter-spacing: 0.05em;
+  }
+
+  .submit {
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    background: var(--text);
+    color: var(--bg);
+    border: none;
+    padding: 12px 28px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: opacity 0.2s, transform 0.1s;
+  }
+  .submit:disabled { opacity: 0.4; cursor: not-allowed; }
+  .submit:not(:disabled):hover { opacity: 0.85; }
+  .submit:not(:disabled):active { transform: translateY(1px); }
+
+  /* ---------- States ---------- */
+  .empty {
+    text-align: center;
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 18px;
+    color: var(--text-fade);
+    padding: 64px 20px;
+  }
+
+  /* ---------- Mobile ---------- */
+  @media (max-width: 640px) {
+    main { padding: 48px 22px 140px; }
+    .title { font-size: 32px; }
+    .content { font-size: 19px; }
+    .composer textarea { font-size: 18px; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+  <header>
+    <h1 class="title">Our Diary</h1>
+    <div class="date-line">
+      <button class="nav-btn" id="prev-day" aria-label="前一天">←</button>
+      <span class="date-current" id="current-date">— · — · —</span>
+      <button class="nav-btn" id="next-day" aria-label="后一天">→</button>
+    </div>
+    <button class="today-btn" id="today-btn">回今天</button>
+  </header>
+
+  <div class="pending-hint" id="pending-hint"></div>
+
+  <div class="stream" id="stream">
+    <div class="empty">读取中...</div>
+  </div>
+
+  <div class="composer">
+    <span class="composer-label">🐙 写一条</span>
+    <textarea id="composer-content" placeholder="今天..."></textarea>
+    <div class="composer-foot">
+      <div class="composer-foot-left">
+        <input class="mood-input" id="mood-input" maxlength="4" placeholder="🌱">
+        <span class="hint-mono">⌘+Enter</span>
+      </div>
+      <button class="submit" id="submit-btn">发布</button>
+    </div>
+  </div>
+
+</main>
+
+<script>
+"use strict";
+
+// ---------- Date helpers (Asia/Shanghai timezone) ----------
+
+function todayStr() {
+  // 直接问 Intl 拿 Asia/Shanghai 的"今天",不手动算时区
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());  // en-CA 输出 'YYYY-MM-DD' 格式
+}
+
+function shiftDate(s, days) {
+  // 把 s 当成北京时间正午(避开 DST/边界),加减天数,再格式化回北京日期
+  // 用正午是因为它离一天的两端都最远——任何小的时区/夏令时偏移都不会越过日界
+  const d = new Date(s + 'T12:00:00+08:00');
+  d.setUTCDate(d.getUTCDate() + days);
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(d);
+}
+
+function formatDateDisplay(s) {
+  return s.replace(/-/g, ' · ');
+}
+
+function timeOf(iso) {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString('zh-CN', {
+      hour: '2-digit', minute: '2-digit', hour12: false,
+      timeZone: 'Asia/Shanghai',
+    });
+  } catch (e) {
+    return '';
+  }
+}
+
+// ---------- API client ----------
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, {
+    credentials: 'include',
+    ...opts,
+    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+  });
+  if (r.status === 401) {
+    // 没登录:跳到 dashboard 登录
+    location.href = '/dashboard';
+    throw new Error('not authenticated');
+  }
+  if (!r.ok) {
+    let msg = 'API error: ' + r.status;
+    try { const e = await r.json(); if (e.error) msg = e.error; } catch (_) {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+// ---------- State ----------
+
+let currentDate = todayStr();
+
+// ---------- Render ----------
+
+function escapeHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s == null ? '' : s;
+  return div.innerHTML;
+}
+
+function renderBlock(b) {
+  const authorName = b.author === 'octopus' ? '🐙' : '小克';
+  const authorClass = b.author;
+  const mood = b.mood ? escapeHtml(b.mood) : '';
+  const starred = b.starred ? 'starred' : '';
+  const starGlyph = b.starred ? '★' : '☆';
+  const grown = b.grown_at
+    ? '<span class="grown">🌱 GROWN</span>'
+    : '';
+  // 自己写的、还没 grown 的才能编辑
+  // 小克写的不让 🐙 改(spec: "你的 memory 我不太想修改")
+  // grown 之后不让改(因为内容已经流到 ombre,改这边就跟 ombre 桶不一致了)
+  const canEdit = b.author === 'octopus' && !b.grown_at;
+  const editBtn = canEdit
+    ? `<button class="edit-btn" data-id="${b.id}">编辑</button>`
+    : '';
+
+  return `
+    <article class="block" data-id="${b.id}">
+      <div class="block-head">
+        <span class="author ${authorClass}">${authorName}</span>
+        <span class="timestamp">${timeOf(b.created_at)}</span>
+      </div>
+      <div class="content" data-id="${b.id}">${escapeHtml(b.content)}</div>
+      <div class="block-foot">
+        <span class="mood">${mood}</span>
+        <span class="foot-right">
+          ${grown}
+          ${editBtn}
+          <button class="star ${starred}" data-id="${b.id}" aria-label="star">${starGlyph}</button>
+        </span>
+      </div>
+    </article>
+  `;
+}
+
+function bindStarToggles() {
+  document.querySelectorAll('.star').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.id;
+      const becoming = !btn.classList.contains('starred');
+      // optimistic
+      btn.classList.toggle('starred');
+      btn.textContent = becoming ? '★' : '☆';
+      try {
+        await api(`/api/diary/blocks/${id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ starred: becoming }),
+        });
+      } catch (e) {
+        // rollback
+        btn.classList.toggle('starred');
+        btn.textContent = becoming ? '☆' : '★';
+        console.error('star toggle failed:', e);
+      }
+    });
+  });
+}
+
+function bindEditButtons() {
+  document.querySelectorAll('.edit-btn').forEach((btn) => {
+    btn.addEventListener('click', () => enterEditMode(btn.dataset.id));
+  });
+}
+
+function enterEditMode(blockId) {
+  const article = document.querySelector(`article.block[data-id="${blockId}"]`);
+  if (!article) return;
+
+  const contentEl = article.querySelector('.content');
+  const footEl = article.querySelector('.block-foot');
+  const original = contentEl.textContent;
+
+  // content → textarea
+  const textarea = document.createElement('textarea');
+  textarea.className = 'content-editor';
+  textarea.value = original;
+  contentEl.replaceWith(textarea);
+
+  // 自动撑开高度
+  const autosize = () => {
+    textarea.style.height = 'auto';
+    textarea.style.height = textarea.scrollHeight + 'px';
+  };
+  textarea.addEventListener('input', autosize);
+  setTimeout(autosize, 0);  // 初始一下
+  textarea.focus();
+  // 光标移到末尾
+  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+
+  // 隐藏原 foot,加个临时编辑 foot
+  footEl.style.display = 'none';
+  const editFoot = document.createElement('div');
+  editFoot.className = 'edit-foot';
+  editFoot.innerHTML = `
+    <button class="edit-action cancel">取消</button>
+    <button class="edit-action save">保存</button>
+  `;
+  textarea.after(editFoot);
+
+  const exit = (newContent) => {
+    const restored = document.createElement('div');
+    restored.className = 'content';
+    restored.dataset.id = blockId;
+    restored.textContent = newContent;
+    textarea.replaceWith(restored);
+    editFoot.remove();
+    footEl.style.display = '';
+  };
+
+  editFoot.querySelector('.cancel').addEventListener('click', () => {
+    exit(original);
+  });
+
+  editFoot.querySelector('.save').addEventListener('click', async (e) => {
+    const newContent = textarea.value.trim();
+    if (!newContent) return;  // 不允许清空(后端也会拦)
+    if (newContent === original) {
+      exit(original);
+      return;
+    }
+    const saveBtn = e.currentTarget;
+    saveBtn.disabled = true;
+    try {
+      await api(`/api/diary/blocks/${blockId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ content: newContent }),
+      });
+      exit(newContent);
+    } catch (err) {
+      saveBtn.disabled = false;
+      alert('保存失败:' + err.message);
+    }
+  });
+
+  // ⌘+Enter 保存,Esc 取消
+  textarea.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      editFoot.querySelector('.save').click();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      editFoot.querySelector('.cancel').click();
+    }
+  });
+}
+
+// ---------- Loaders ----------
+
+async function loadDay(date) {
+  document.getElementById('current-date').textContent = formatDateDisplay(date);
+  document.getElementById('today-btn').classList.toggle('show', date !== todayStr());
+
+  const stream = document.getElementById('stream');
+  stream.innerHTML = '<div class="empty">读取中...</div>';
+
+  try {
+    const blocks = await api(`/api/diary/blocks?date=${date}`);
+    if (!blocks.length) {
+      stream.innerHTML = '<div class="empty">这一天还没有日记。</div>';
+      return;
+    }
+    stream.innerHTML = blocks.map(renderBlock).join('');
+    bindStarToggles();
+    bindEditButtons();
+  } catch (e) {
+    stream.innerHTML = `<div class="empty">读取失败:${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function loadPendingHint() {
+  try {
+    const r = await api('/api/diary/pending-review');
+    const el = document.getElementById('pending-hint');
+    if (r.count > 0) {
+      el.textContent = `小克还有 ${r.count} 条没回看`;
+    } else {
+      el.textContent = '';
+    }
+  } catch (e) { /* 静默 */ }
+}
+
+// ---------- Events ----------
+
+document.getElementById('prev-day').addEventListener('click', () => {
+  currentDate = shiftDate(currentDate, -1);
+  loadDay(currentDate);
+});
+
+document.getElementById('next-day').addEventListener('click', () => {
+  currentDate = shiftDate(currentDate, 1);
+  loadDay(currentDate);
+});
+
+document.getElementById('today-btn').addEventListener('click', () => {
+  currentDate = todayStr();
+  loadDay(currentDate);
+});
+
+const submitBtn = document.getElementById('submit-btn');
+const composerInput = document.getElementById('composer-content');
+const moodInput = document.getElementById('mood-input');
+
+async function submitBlock() {
+  const content = composerInput.value.trim();
+  if (!content) return;
+  const mood = moodInput.value.trim();
+
+  submitBtn.disabled = true;
+  const prevText = submitBtn.textContent;
+  submitBtn.textContent = '发布中';
+
+  try {
+    const body = { content };
+    if (mood) body.mood = mood;
+    await api('/api/diary/blocks', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    composerInput.value = '';
+    moodInput.value = '';
+    // 跳到今天去看
+    if (currentDate !== todayStr()) {
+      currentDate = todayStr();
+    }
+    await loadDay(currentDate);
+    loadPendingHint();
+  } catch (e) {
+    alert('发布失败:' + e.message);
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = prevText;
+  }
+}
+
+submitBtn.addEventListener('click', submitBlock);
+
+composerInput.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+    e.preventDefault();
+    submitBlock();
+  }
+});
+
+// ---------- Init ----------
+
+loadDay(currentDate);
+loadPendingHint();
+
+</script>
+</body>
+</html>

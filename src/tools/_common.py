@@ -619,3 +619,48 @@ async def cascade_plan_resolved_to_buckets(plan_meta: dict, plan_id: str) -> lis
 # 向后兼容：保留下划线别名（部分历史调用点用 _ 前缀）
 _check_duplicate_for = check_duplicate_for
 _check_plan_resolution = check_plan_resolution
+
+
+# --- 二改：breath 头部时间戳标签（让阅读时直接看出"哪天的"） ---
+def format_bucket_age(meta: dict) -> str:
+    """Return a human-readable '[age tag] ' prefix (with trailing space) for a
+    bucket header. Strategy:
+      < 24h:     [今天]
+      1-2 days:  [昨天] / [前天]
+      3-7 days:  [N天前]
+      8-30 days: [MM-DD, N周前]
+      > 30 days: [YYYY-MM-DD]
+    Returns '' when `created` is missing/unparseable so callers can concat
+    safely.
+    """
+    from datetime import datetime, timezone
+
+    created_raw = meta.get("created") or meta.get("generated_at")
+    if not created_raw:
+        return ""
+    try:
+        text = str(created_raw).strip()
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        dt = datetime.fromisoformat(text)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        return ""
+    days = (datetime.now(timezone.utc) - dt).total_seconds() / 86400
+    if days < 0:
+        return ""
+    if days < 1:
+        tag = "今天"
+    elif days < 2:
+        tag = "昨天"
+    elif days < 3:
+        tag = "前天"
+    elif days < 8:
+        tag = f"{int(days)}天前"
+    elif days < 31:
+        weeks = max(1, int(days // 7))
+        tag = f"{dt.strftime('%m-%d')}, {weeks}周前"
+    else:
+        tag = dt.strftime("%Y-%m-%d")
+    return f"[{tag}] "

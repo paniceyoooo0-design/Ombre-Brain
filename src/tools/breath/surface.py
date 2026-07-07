@@ -28,6 +28,7 @@ import time
 from datetime import datetime, timezone, timedelta
 
 from .. import _runtime as rt
+from .._common import format_bucket_age
 from utils import strip_wikilinks, count_tokens_approx
 
 # U-07 fix: throttle the sampling-fallback INFO log to once per 5 minutes.
@@ -78,12 +79,12 @@ async def surface_default(max_results: int, max_tokens: int, tag_filter: list) -
             summary = await rt.dehydrator.dehydrate(strip_wikilinks(b["content"]), clean_meta)
             if not str(summary or "").strip():
                 summary = _raw_core_fallback(b["content"])
-            pinned_results.append(f"📌 [核心准则] [bucket_id:{b['id']}] {summary}")
+            pinned_results.append(f"📌 [核心准则] {format_bucket_age(b['metadata'])}[bucket_id:{b['id']}] {summary}")
         except Exception as e:
             rt.logger.warning(f"Failed to dehydrate pinned bucket / 钉选桶脱水失败: {e}")
             # 降级：直接展示原文片段，确保核心准则永远可见
             fallback = _raw_core_fallback(b["content"])
-            pinned_results.append(f"📌 [核心准则] [bucket_id:{b['id']}] {fallback}")
+            pinned_results.append(f"📌 [核心准则] {format_bucket_age(b['metadata'])}[bucket_id:{b['id']}] {fallback}")
 
     # --- iter 2.0: anchor 桶在默认浮现模式的 *未解决池* 不出现（anchor 是坐标系不是浮现对象）---
     # anchor 过滤仅作用于 unresolved 候选，不影响 pinned 提取（上方已完成）。
@@ -208,7 +209,7 @@ async def surface_default(max_results: int, max_tokens: int, tag_filter: list) -
             if summary_tokens > token_budget:
                 break
             score = rt.decay_engine.calculate_score(b["metadata"])
-            dynamic_results.append(f"[权重:{score:.2f}] [bucket_id:{b['id']}] {summary}")
+            dynamic_results.append(f"[权重:{score:.2f}] {format_bucket_age(b['metadata'])}[bucket_id:{b['id']}] {summary}")
             token_budget -= summary_tokens
         except Exception as e:
             rt.logger.warning(f"Failed to dehydrate surfaced bucket / 浮现脱水失败: {e}")

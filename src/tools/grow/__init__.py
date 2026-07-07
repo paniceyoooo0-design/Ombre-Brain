@@ -32,11 +32,29 @@ async def dispatch(content: str = "", items: Optional[list] = None) -> str:
     # 预拆分模式：上层 AI 已拆好 N 条最终正文 → 逐字入库，跳过 digest 的二次改写。
     # 传了 items（非空列表）即走此路；不传则行为与旧版完全一致（向后兼容）。
     if isinstance(items, list) and len(items) > 0:
-        return await grow_items(items)
+        result = await grow_items(items)
+        _maybe_dream()
+        return result
 
     if not content or not content.strip():
         return "内容为空，无法整理。"
 
     if len(content.strip()) < 30:
-        return await grow_shortpath(content)
-    return await grow_core(content)
+        result = await grow_shortpath(content)
+        _maybe_dream()
+        return result
+    result = await grow_core(content)
+    _maybe_dream()
+    return result
+
+
+def _maybe_dream() -> None:
+    """二改（Night-Fall）：grow 落库后 fire-and-forget 生成潜伏梦。
+    钩子由 server.py 装配 Night-Fall 成功后写入 _runtime；未装配时是 no-op。"""
+    hook = getattr(rt, "maybe_dream", None)
+    if hook is None:
+        return
+    try:
+        hook()
+    except Exception:
+        pass

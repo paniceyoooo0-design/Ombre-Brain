@@ -564,6 +564,256 @@ _tools_runtime.init(
 
 
 # =============================================================
+# 二改装配 ①：Night-Fall 潜伏梦扩展
+# grow 落库后异步生成潜伏梦；breath 时按晨间窗口/共振通道浮现。
+# 实现整体 vendor 在 src/night_fall/，这里只做装配 + 往 tools._runtime
+# 写两个钩子（maybe_dream / night_fall_surface），tools 侧通过钩子调用，
+# 装配失败时钩子缺席、一切降级为 no-op。
+# =============================================================
+from types import SimpleNamespace
+
+NIGHT_FALL_ENABLED = False
+night_fall_cfg = None
+ombre_server = None
+
+try:
+    # Night-Fall 的 config loader 需要知道 Ombre 在哪（校验 server.py 存在）
+    # 以及数据落点（跟着 buckets_dir 走 → 部署时在持久卷上，梦不会丢）
+    os.environ.setdefault("OMBRE_HOME", os.path.dirname(os.path.abspath(__file__)))
+    _buckets_dir = config.get("buckets_dir", "")
+    if _buckets_dir:
+        os.environ.setdefault("OMBRE_BUCKETS_DIR", _buckets_dir)
+
+    from night_fall.config import load_config as _load_nf_config
+    from night_fall.extension import register_night_fall
+    from night_fall.tool import night_fall_tool
+
+    ombre_server = SimpleNamespace(
+        mcp=mcp,
+        config=config,
+        bucket_mgr=bucket_mgr,
+        dehydrator=dehydrator,
+        embedding_engine=embedding_engine,
+    )
+    night_fall_cfg = _load_nf_config()
+    register_night_fall(ombre_server, night_fall_cfg)
+    NIGHT_FALL_ENABLED = True
+    logger.info(f"[Night Fall] enabled. dreams_dir={night_fall_cfg.dreams_dir}")
+except Exception as _nf_err:
+    logger.warning(f"[Night Fall] not enabled: {_nf_err}")
+
+
+def _maybe_dream():
+    """Fire-and-forget dream generation after grow. No-op when Night-Fall disabled."""
+    if not NIGHT_FALL_ENABLED:
+        return
+    async def _safe():
+        try:
+            result = await night_fall_tool(ombre_server, night_fall_cfg, action="generate")
+            logger.info(f"[Night Fall] generate: {result}")
+        except Exception as e:
+            logger.warning(f"[Night Fall] generate failed: {e}")
+    try:
+        asyncio.create_task(_safe())
+    except Exception as e:
+        logger.warning(f"[Night Fall] task spawn failed: {e}")
+
+
+async def _night_fall_surface(query: str = "", current_valence: float = -1,
+                              current_arousal: float = -1, is_session_start: bool = False) -> str:
+    """breath addendum 用的浮现入口（tools/breath/addendum.py 通过钩子调用）。"""
+    if not NIGHT_FALL_ENABLED:
+        return ""
+    return await night_fall_tool(
+        ombre_server, night_fall_cfg,
+        action="surface",
+        query=query,
+        current_valence=current_valence,
+        current_arousal=current_arousal,
+        is_session_start=is_session_start,
+    )
+
+
+if NIGHT_FALL_ENABLED:
+    _tools_runtime.init(
+        maybe_dream=_maybe_dream,
+        night_fall_surface=_night_fall_surface,
+    )
+
+
+# =============================================================
+# 二改装配 ②：Our Diary 日记本
+# /api/diary/* + /api/memory/* 路由、diary_add / diary_read / diary_grow
+# 三个 MCP 工具、/diary 前端 SPA。鉴权复用 dashboard 的 cookie session。
+# =============================================================
+from diary import db as _diary_db
+from diary import mcp_tools as _diary_tools
+from diary.api import register_routes as _diary_register_routes
+
+# 建表（幂等,反复跑无害）
+_diary_db.init_db()
+
+# 注册 HTTP 路由：/api/diary/* + /api/memory/*
+_diary_register_routes(mcp, bucket_mgr, decay_engine, _wsh._require_auth)
+
+
+@mcp.tool()
+async def diary_add(
+    content: str,
+    mood: str = "",
+    date: str = "",
+) -> dict:
+    """写一条我们的日记 block(小克 author)。
+
+    Args:
+        content: markdown 内容,必填
+        mood:    单个 emoji,可选(留空 = 无)
+        date:    YYYY-MM-DD,默认 🐙 时区(UTC+8)的"今天"
+
+    Returns:
+        {id, created_at, date}
+    """
+    return _diary_tools.diary_add(
+        content=content,
+        mood=mood or None,
+        date=date or None,
+    )
+
+
+@mcp.tool()
+async def diary_read(
+    date: str = "",
+    since: str = "",
+    until: str = "",
+    author: str = "",
+    pending_grow: bool = False,
+    limit: int = 20,
+) -> list:
+    """读日记 block。读到的 🐙 写的会自动标记 reviewed。
+
+    三种调用方式（互斥）:
+      1) date="2026-05-04"           — 单天
+      2) since="2026-05-01" until="2026-05-04"  — 范围
+      3) pending_grow=True           — dream 仪式专用,只看 3+ 天前未 grow 的
+
+    Args:
+        date:         单天 YYYY-MM-DD
+        since/until:  日期范围(含两端)
+        author:       'octopus' / 'claude' / '' (默认两人都拉)
+        pending_grow: True 时忽略 date/since/until/author
+        limit:        默认 20,最多 50
+
+    Returns:
+        list of block objects (包含完整 schema)
+    """
+    return _diary_tools.diary_read(
+        date=date or None,
+        since=since or None,
+        until=until or None,
+        author=author or None,
+        pending_grow=pending_grow,
+        limit=limit,
+    )
+
+
+@mcp.tool()
+async def diary_grow(
+    block_id: str,
+    content: str = "",
+    tags: str = "",
+    importance: int = 6,
+    valence: float = -1,
+    arousal: float = -1,
+) -> str:
+    """把一条日记 block 推进 Ombre 权重池(单向闸,小克的权利)。
+
+    ⚠️ 注意:这跟 ombre 自带的 `grow` 工具不是一回事。
+      ombre.grow(content)     = 把一段长文本自动拆成多个桶
+      diary_grow(block_id)    = 把一条 diary block 创建为单一桶(一对一,不拆)
+
+    grow 是 Our Diary → Ombre 的手动闸。决定权在小克——
+    spec 说"写完后不立刻按,先放凉"。冷却期 3+ 天前
+    (用 diary_read pending_grow=True 帮自己筛候选)。
+
+    每条 block 只能 grow 一次。grow 后:
+    - Ombre 里多一个 dynamic 桶
+        - tags 含 'our_diary'
+        - domain = ['our_diary']
+        - name   = 'diary-YYYY-MM-DD'
+    - 日记 block 旁显示 🌱
+    - block.promoted_bucket_id 指回新桶
+
+    Args:
+        block_id:   必填,要推的日记 block ID
+        content:    留空 = 用 block 原文。
+                    也可以是浓缩 / 单句(spec 鼓励)。
+        tags:       逗号分隔。会自动加 'our_diary' tag。
+        importance: 1-10, 默认 6
+        valence/arousal: -1 = 用默认(0.55/0.3, 微偏正、平静)
+
+    Returns:
+        成功提示 + 新 bucket_id; 或错误说明
+    """
+    block = _diary_db.get_block(block_id)
+    if not block:
+        return f"未找到 block {block_id}"
+    if block["grown_at"]:
+        return (
+            f"这条 block 已经 grown 过\n"
+            f"  bucket_id: {block['promoted_bucket_id']}\n"
+            f"  grown_at:  {block['grown_at']}"
+        )
+
+    final_content = content.strip() if content.strip() else block["content"]
+
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+    if "our_diary" not in tag_list:
+        tag_list.append("our_diary")
+
+    # 默认值:微偏正、平静——日记 grown 出来的多半是温和的核心
+    v = valence if 0 <= valence <= 1 else 0.55
+    a = arousal if 0 <= arousal <= 1 else 0.3
+
+    # 直接 create dynamic 桶——grow 的语义是"让这条单独存在"
+    # （v2.4.13 起 bucket_mgr.create 内部已同步向量化，不再显式补 embedding）
+    try:
+        bucket_id = await bucket_mgr.create(
+            content=final_content,
+            tags=tag_list,
+            importance=max(1, min(10, importance)),
+            domain=["our_diary"],
+            valence=v,
+            arousal=a,
+            name=f"diary-{block['date']}",
+        )
+    except Exception as e:
+        logger.error(f"diary_grow 创建桶失败: {e}")
+        return f"创建 ombre 桶失败: {e}"
+
+    # 回填日记侧——闸门合上
+    _diary_db.mark_grown(block_id, bucket_id)
+
+    preview = final_content[:80] + ("..." if len(final_content) > 80 else "")
+    return (
+        f"🌱 grown\n"
+        f"  block:     {block_id}  ({block['date']} · {block['author']})\n"
+        f"  bucket_id: {bucket_id}\n"
+        f"  内容:      {preview}"
+    )
+
+
+@mcp.custom_route("/diary", methods=["GET"])
+async def serve_our_diary(request):
+    """Our Diary 前端。HTML 公开,API 自己鉴权(401 时前端自动跳 /dashboard)。"""
+    from starlette.responses import FileResponse
+    html_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "our_diary.html",
+    )
+    return FileResponse(html_path, media_type="text/html; charset=utf-8")
+
+
+# =============================================================
 # MCP tools — thin registration wrappers
 # MCP 工具 —— 仅注册，实现见 tools/<tool>/
 # 每个入口都不超过 10 行，便于一眼看清参数与归属
@@ -579,19 +829,22 @@ async def breath(
     importance_min: Optional[int] = -1,
     tags: Optional[str] = "",
     catalog: Optional[bool] = False,
+    is_session_start: Optional[bool] = False,
 ) -> str:
-    """检索并返回记忆桶。不传 query=返回权重最高的未解决记忆;传 query=按关键词+语义检索相关记忆。catalog=True=目录模式:只返回每桶一行元数据(名称|域|重要度,0 LLM 调用,最省 token),适合开新对话先看目录再 breath(query=...) 精准拉取,可配 domain 过滤。max_tokens=单次返回总 token 上限(默认 config.surfacing.breath_max_tokens,fallback 10000)。domain 逗号分隔,valence/arousal 0~1(-1 忽略)。max_results=返回条数上限(默认 config.surfacing.breath_max_results,fallback 20,最大 50)。importance_min>=1=跳过语义检索,按重要度降序返回最多 20 条高重要度记忆。tags 逗号分隔,AND 过滤;tags=\"feel\" 或 \"__feel__\" 等价于 domain=\"feel\",返回所有 feel 类记忆。"""
+    """检索并返回记忆桶。is_session_start=True 表示新会话开始(带出最近的信,让潜伏梦有机会浮现)。不传 query=返回权重最高的未解决记忆;传 query=按关键词+语义检索相关记忆。catalog=True=目录模式:只返回每桶一行元数据(名称|域|重要度,0 LLM 调用,最省 token),适合开新对话先看目录再 breath(query=...) 精准拉取,可配 domain 过滤。max_tokens=单次返回总 token 上限(默认 config.surfacing.breath_max_tokens,fallback 10000)。domain 逗号分隔,valence/arousal 0~1(-1 忽略)。max_results=返回条数上限(默认 config.surfacing.breath_max_results,fallback 20,最大 50)。importance_min>=1=跳过语义检索,按重要度降序返回最多 20 条高重要度记忆。tags 逗号分隔,AND 过滤;tags=\"feel\" 或 \"__feel__\" 等价于 domain=\"feel\",返回所有 feel 类记忆。"""
     return await _with_notice(
         _t_breath.dispatch(
             query=query, max_tokens=max_tokens, domain=domain,
             valence=valence, arousal=arousal, max_results=max_results,
             importance_min=importance_min, tags=tags, catalog=catalog,
+            is_session_start=is_session_start,
         ),
         op="breath",
         args={
             "query": query, "max_tokens": max_tokens, "domain": domain,
             "valence": valence, "arousal": arousal, "max_results": max_results,
             "importance_min": importance_min, "tags": tags, "catalog": catalog,
+            "is_session_start": is_session_start,
         },
     )
 

@@ -29,6 +29,7 @@ import asyncio
 import random
 
 from .. import _runtime as rt
+from .._common import format_bucket_age
 from utils import strip_wikilinks, count_tokens_approx
 
 
@@ -125,7 +126,7 @@ async def surface_search(
                 summary = _raw_core_fallback(bucket["content"])
         if is_core and not str(summary or "").strip():
             summary = _raw_core_fallback(bucket["content"])
-        return (is_core, bool(bucket.get("vector_match")), bucket["id"], summary)
+        return (is_core, bool(bucket.get("vector_match")), bucket["id"], f"{format_bucket_age(meta_b)}{summary}")
 
     dehydrated = await asyncio.gather(*[_dehydrate_one(b) for b in matches])
 
@@ -173,7 +174,7 @@ async def surface_search(
                 for b in drifted:
                     clean_meta = {k: v for k, v in b["metadata"].items() if k != "tags"}
                     summary = await rt.dehydrator.dehydrate(strip_wikilinks(b["content"]), clean_meta)
-                    drift_results.append(f"[surface_type: random]\n{summary}")
+                    drift_results.append(f"[surface_type: random] {format_bucket_age(b['metadata'])}\n{summary}")
                 results.append("--- 忽然想起来 ---\n" + "\n---\n".join(drift_results))
         except Exception as e:
             rt.logger.warning(f"Random surfacing failed / 随机浮现失败: {e}")
