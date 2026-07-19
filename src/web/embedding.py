@@ -485,6 +485,48 @@ def register(mcp) -> None:
             return err
         return JSONResponse({"ok": True, "backfill": _backfill_state})
 
+    @mcp.custom_route("/api/embedding/orphans/clean", methods=["POST"])
+    async def api_embedding_orphans_clean(request: Request) -> Response:
+        """对账并清理孤儿 embedding（tools/clean_orphan_embeddings.py 的 web 版）。
+
+        孤儿 = embeddings.db 里有行、buckets/ 里桶文件已不在（早期删桶没同步
+        删向量、手动删 markdown、iCloud 冲突等）。孤儿不影响检索正确性，但占
+        空间，且让 pulse 的「索引漂移」告警一直响。
+
+        Body: {"apply": true} 真删；不传或 false 只对账（dry-run）。
+        同步执行（纯 SQLite 删行，秒级），返回 {ok, orphans, deleted, sample}。
+        """
+        from starlette.responses import JSONResponse
+        err = sh._require_auth(request)
+        if err:
+            return err
+        engine = sh.embedding_engine
+        if not engine:
+            return JSONResponse({"ok": False, "error": "embedding engine 未初始化。"}, status_code=400)
+        # 与补齐任务互斥：虽然孤儿行与补齐目标（现存桶）集合不相交，
+        # 但同时写 embeddings.db 没必要，等它跑完再清理更省心。
+        if _backfill_state.get("running"):
+            return JSONResponse({"ok": False, "error": "补齐任务进行中，请稍后再清理。"}, status_code=409)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        apply = bool(body.get("apply"))
+        try:
+            bucket_ids = {b["id"] for b in await sh.bucket_mgr.list_all(include_archive=True)}
+            orphan_ids = sorted(set(engine.list_all_ids()) - bucket_ids)
+            deleted = 0
+            if apply:
+                for oid in orphan_ids:
+                    engine.delete_embedding(oid)
+                    deleted += 1
+            return JSONResponse({
+                "ok": True, "orphans": len(orphan_ids), "deleted": deleted,
+                "sample": orphan_ids[:10],
+            })
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
     @mcp.custom_route("/api/embedding/local/status", methods=["GET"])
     async def api_embedding_local_status(request: Request) -> Response:
         """本地 ollama 是否可达 + 已有模型列表 + 目标模型是否就绪。"""

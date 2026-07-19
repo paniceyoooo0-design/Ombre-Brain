@@ -20,7 +20,7 @@ breath 中。
 - plan 不做向量去重，只做精确文本去重
 - letter 永不合并、永不压缩、永不被衰减归档
 
-对外暴露：plan_create / letter_write / letter_read
+对外暴露：plan_create / plan_list / letter_write / letter_read
 ========================================
 """
 
@@ -239,3 +239,71 @@ async def letter_read(
             + strip_wikilinks(b["content"])
         )
     return "=== 信件 ===\n" + "\n\n---\n\n".join(parts)
+
+
+async def plan_list(
+    status: Optional[str] = "active",
+    limit: Optional[int] = 50,
+) -> str:
+    if status is None: status = "active"
+    if limit is None: limit = 50
+    try:
+        limit = max(1, min(100, int(limit)))
+    except Exception:
+        limit = 50
+    status = str(status).strip().lower()
+    if status not in ("active", "resolved", "abandoned", "all"):
+        status = "active"
+    try:
+        all_b = await rt.bucket_mgr.list_all(include_archive=False)
+    except Exception as e:
+        return f"读取 plan 失败: {e}"
+
+    def _st(b):
+        s = (b["metadata"].get("status") or "active").lower()
+        return s if s in ("active", "resolved", "abandoned") else "active"
+
+    plans = [b for b in all_b if b.get("metadata", {}).get("type") == "plan"]
+    counts = {"active": 0, "resolved": 0, "abandoned": 0}
+    for b in plans:
+        counts[_st(b)] += 1
+    header = (
+        f"=== plans（active {counts['active']} · resolved {counts['resolved']}"
+        f" · abandoned {counts['abandoned']}）==="
+    )
+    if not plans:
+        return header + "\nplan 桶是空的。"
+
+    if status != "all":
+        plans = [b for b in plans if _st(b) == status]
+    if not plans:
+        return header + f"\n没有 {status} 状态的 plan。（status 可选 active/resolved/abandoned/all）"
+
+    def _when(b):
+        m = b["metadata"]
+        return m.get("last_active") or m.get("created") or ""
+
+    # active 与 dashboard 看板同序：weight 降序为主、登记时间倒序为辅；
+    # 其余（含 all）按最近动过的在前。
+    if status == "active":
+        plans.sort(key=lambda b: b["metadata"].get("created") or "", reverse=True)
+        plans.sort(key=lambda b: float(b["metadata"].get("weight") or 0.5), reverse=True)
+    else:
+        plans.sort(key=_when, reverse=True)
+
+    from .._common import format_bucket_age
+    lines = [header]
+    for b in plans[:limit]:
+        m = b["metadata"]
+        w = float(m.get("weight") or 0.5)
+        created = (m.get("created") or "")[:10]
+        age = format_bucket_age(m).strip()
+        head = f"[{b['id']}] {_st(b)} · weight {w:.1f} · 登记 {created or '?'}{(' ' + age) if age else ''}"
+        entry = head + "\n" + strip_wikilinks(b.get("content", "")).strip()
+        why = str(m.get("why_remembered") or "").strip()
+        if why:
+            entry += f"\n  ↳ why: {why}"
+        lines.append(entry)
+    if len(plans) > limit:
+        lines.append(f"（还有 {len(plans) - limit} 条未显示，加大 limit 查看）")
+    return "\n\n".join(lines)

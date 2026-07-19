@@ -984,6 +984,19 @@ async def plan(
 
 
 @mcp_extra.tool()
+async def plan_list(
+    status: Optional[str] = "active",
+    limit: Optional[int] = 50,
+) -> str:
+    """列出已登记的 plan(待办/承诺/未闭环事项)——plan 的读取口。status=active(默认)/resolved/abandoned/all;limit=最多返回条数(默认 50)。active 按 weight 降序(重的在前)、登记时间倒序,其余按最近变动倒序;每条返回 id/status/weight/登记时间/正文(+why_remembered)。只读不改状态;改状态用 trace(status=...)。"""
+    return await _with_notice(
+        _t_plan.plan_list(status=status, limit=limit),
+        op="plan_list",
+        args={"status": status, "limit": limit},
+    )
+
+
+@mcp_extra.tool()
 async def letter_write(
     author: str,
     content: str,
