@@ -688,6 +688,7 @@ async def diary_read(
     author: str = "",
     pending_grow: bool = False,
     limit: int = 20,
+    mark_as_reviewed: bool = True,
 ) -> list:
     """读日记 block。读到的 🐙 写的会自动标记 reviewed。
 
@@ -702,6 +703,9 @@ async def diary_read(
         author:       'octopus' / 'claude' / '' (默认两人都拉)
         pending_grow: True 时忽略 date/since/until/author
         limit:        默认 20,最多 50
+        mark_as_reviewed: False 时只读不标 reviewed——给「不是小克本人在回看」
+                      的调用方用(比如房子书房的日记书架是 🐙 在看)。默认 True
+                      = 原有智能行为(普通查询标,pending_grow 不标)。
 
     Returns:
         list of block objects (包含完整 schema)
@@ -713,6 +717,8 @@ async def diary_read(
         author=author or None,
         pending_grow=pending_grow,
         limit=limit,
+        # True → None 走底层智能默认(普通查询标/pending_grow 不标),False → 强制不标
+        mark_as_reviewed=None if mark_as_reviewed else False,
     )
 
 
